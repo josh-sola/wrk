@@ -189,7 +189,7 @@ fn go(
 
     let tree_path = paths.tree(&repo, &tree);
     let env = hooks::hook_env(paths, &repo, &tree);
-    let err = harness::exec_in(&harness, &tree_path, env, extra_args);
+    let err = harness::exec_in(&harness, &tree_path, &tree, env, extra_args);
     output::print_error_human(&err);
     1
 }

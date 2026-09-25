@@ -7,7 +7,16 @@ use crate::output::WrkError;
 use crate::paths::Paths;
 
 const DEFAULT_HARNESS: &str = "claude";
-const BUILTIN_HARNESSES: &[&str] = &["claude", "codex", "pi", "devin"];
+
+/// Built-in harness commands. `{tree}` is replaced with the tree name at
+/// launch (see `harness::exec_in`), so `claude` and `pi` get a session name
+/// for free; `codex` and `devin` have no such flag.
+const BUILTIN_HARNESSES: &[(&str, &[&str])] = &[
+    ("claude", &["claude", "--name", "{tree}"]),
+    ("pi", &["pi", "--name", "{tree}"]),
+    ("codex", &["codex"]),
+    ("devin", &["devin"]),
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,7 +41,12 @@ pub struct Config {
 fn builtin_harnesses() -> BTreeMap<String, Vec<String>> {
     BUILTIN_HARNESSES
         .iter()
-        .map(|name| ((*name).to_string(), vec![(*name).to_string()]))
+        .map(|(name, command)| {
+            (
+                (*name).to_string(),
+                command.iter().map(|arg| (*arg).to_string()).collect(),
+            )
+        })
         .collect()
 }
 
@@ -103,7 +117,14 @@ mod tests {
         let config = load(&paths).unwrap();
         assert_eq!(config.default_harness, "claude");
         assert_eq!(config.harnesses.len(), 4);
-        assert_eq!(config.harnesses["claude"], vec!["claude".to_string()]);
+        assert_eq!(
+            config.harnesses["claude"],
+            vec![
+                "claude".to_string(),
+                "--name".to_string(),
+                "{tree}".to_string()
+            ]
+        );
     }
 
     #[test]

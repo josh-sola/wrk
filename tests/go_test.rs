@@ -138,6 +138,49 @@ fn go_new_flag_creates_even_when_a_prefix_would_match() {
     );
 }
 
+/// Like `setup_fake_harness`, but configures a command with a `{tree}`
+/// placeholder so we can check it gets substituted at launch.
+fn setup_fake_harness_with_tree_name(env: &Env) -> PathBuf {
+    let out_dir = env.work.path().join("harness-out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let script_path = env.work.path().join("fake-harness.sh");
+    std::fs::write(
+        &script_path,
+        format!(
+            "#!/bin/sh\npwd > {out}/cwd\nenv | grep '^WRK_' | sort > {out}/env\nprintf '%s\\n' \"$@\" > {out}/args\n",
+            out = out_dir.display()
+        ),
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script_path, perms).unwrap();
+
+    std::fs::write(
+        env.root_path().join("config.toml"),
+        format!(
+            "[harnesses.fake]\ncommand = [\"{}\", \"--name\", \"{{tree}}\"]\n",
+            script_path.display()
+        ),
+    )
+    .unwrap();
+
+    out_dir
+}
+
+#[test]
+fn go_substitutes_the_tree_name_into_the_harness_command() {
+    let env = Env::new();
+    let repo = clone_default(&env);
+    let out = setup_fake_harness_with_tree_name(&env);
+
+    env.cmd(&["go", &repo, "t1", "fake"]).assert().success();
+
+    let args = std::fs::read_to_string(out.join("args")).unwrap();
+    assert_eq!(args.trim(), "--name\nt1");
+}
+
 #[test]
 fn go_resolves_the_harness_by_prefix() {
     let env = Env::new();

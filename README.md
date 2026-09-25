@@ -47,13 +47,20 @@ wrk path <repo> [tree]
 
 ## Harnesses
 
-`claude`, `codex`, `pi`, and `devin` are built in. Add or override harnesses in `config.toml`:
+`claude`, `codex`, `pi`, and `devin` are built in. `claude` and `pi` get `--name <tree>` by default, so the session is named after the tree. Add or override harnesses in `config.toml`:
 
 ```toml
 default_harness = "claude"
 
 [harnesses.claude]
 command = ["claude", "--dangerously-skip-permissions"]
+```
+
+`wrk go` replaces `{tree}` in any command arg with the tree name. An override replaces the whole built-in command, so keep `--name` in it if you want the session named:
+
+```toml
+[harnesses.claude]
+command = ["claude", "--effort", "high", "--name", "{tree}"]
 ```
 
 ## herdr
