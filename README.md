@@ -27,19 +27,19 @@ Hooks run with the tree as their working directory. They get `WRK_ROOT`, `WRK_RE
 
 ```sh
 wrk clone <url> [repo]
-wrk new <repo> <tree> [--wait]
+wrk new <repo> <tree> [--track] [--wait]
 wrk rm <repo> <tree> [--force]
 wrk wait <repo> <tree> [--timeout SECS]
-wrk go [<repo> <tree> <harness>] [--new] [--wait] [-- <harness args>]
-wrk pick [--json]
+wrk go [<repo> <tree> <harness>] [--new] [--wait] [--track] [--fill] [-- <harness args>]
+wrk pick [--json] [--fill]
 wrk ls [repo]
 wrk logs <repo> <tree> [-f]
 wrk path <repo> [tree]
 ```
 
 - Any `<repo>`, `<tree>`, or `<harness>` argument accepts a unique prefix. An ambiguous prefix is an error that lists the matches.
-- `new` checks out branch `<tree>`. It uses the local branch if one exists, then `origin/<tree>`, and otherwise branches from origin's default branch.
-- `go` opens an existing tree that matches, or creates one when nothing matches. `--new` always creates a tree. `go` launches the harness in the tree right away, even while `on_create` is still running, and warns you if the hook is running or failed. With `--wait` it waits for `on_create` first and doesn't launch if the hook failed. With no arguments it opens a picker.
+- `new` checks out branch `<tree>`. It reuses a local branch of that name if one exists. Otherwise it creates a fresh branch from origin's default branch, even when `origin/<tree>` exists, because common names often match someone's stale branch. It tells you when it skipped one. Pass `--track` to check out `origin/<tree>` instead. `go --track` does the same when `go` creates a tree.
+- `go` opens an existing tree that matches, or creates one when nothing matches. `--new` always creates a tree. `go` launches the harness in the tree right away, even while `on_create` is still running, and warns you if the hook is running or failed. With `--wait` it waits for `on_create` first and doesn't launch if the hook failed. With no arguments it opens a picker. The picker draws a centered panel. `--fill` makes it use the whole terminal, for hosts such as herdr popups that already pad it.
 - `pick` opens the same picker but only prints the selection: the tree path, plus the `wrk go` command to open it with `--json`. It changes nothing, so a tool that places sessions itself can run the command wherever it wants. The picker draws on `/dev/tty`, so `$(wrk pick --json)` captures only the JSON.
 - `rm` refuses a tree with uncommitted changes or a running hook unless you pass `--force`. It keeps the branch.
 - `wait` exits 0 when the hook succeeded or there was none, 1 when it failed, and 2 when it crashed or timed out.
@@ -55,3 +55,22 @@ default_harness = "claude"
 [harnesses.claude]
 command = ["claude", "--dangerously-skip-permissions"]
 ```
+
+## herdr
+
+`herdr-plugin/` lets [herdr](https://herdr.dev) open `wrk pick`'s selection in its own workspace and tab instead of the calling terminal. Link it with:
+
+```sh
+herdr plugin link <repo>/herdr-plugin
+```
+
+Then bind a key to it in herdr's config:
+
+```toml
+[[keys.command]]
+key = "prefix+w"
+type = "plugin_action"
+command = "dev.wrk.pick"
+```
+
+See `herdr-plugin/open.sh` for the placement logic and `herdr-plugin/test.sh` for its offline tests.

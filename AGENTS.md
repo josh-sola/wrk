@@ -34,6 +34,7 @@ To try the picker with fake data: `cargo run --example pick_demo`. It needs a re
 - **`go` has one create → exec path, with an optional wait** (the private `go` function in `src/cmd/go.rs`). The picker returns a `GoTarget` and hands off to it. Don't add a second launch path. `pick` returns the same `GoTarget` but never hands off to it — it only prints the selection.
 - **JSON:** each command with `--json` prints exactly one document on stdout, with snake_case keys. Errors in JSON mode also go to stdout. Progress lines always go to stderr. `go` has no `--json`.
 - **Out of scope:** submodule handling, Graphite, and terminal or window-manager integrations. Hooks cover provisioning.
+- **herdr integration lives only in `herdr-plugin/`.** `wrk` itself must never call herdr.
 
 ## Tests
 
