@@ -12,20 +12,26 @@ When you are done you will have:
 
 You need these on your machine:
 
-- **Rust**, to build `wrk`. Check with `cargo --version`.
 - **GitHub SSH access** to `Sola-Solutions`. Check with `ssh -T git@github.com`.
 - **The monorepo toolchain**: `pnpm`, `uv`, and the AWS CLI (`aws`). You already have these if you work in `monorepo` today.
 - **An AWS SSO profile for dev with read access.** The hook assumes it is called `admin-dev-readonly`. Check with `aws configure list-profiles`. If yours has another name, change it in step 3.
 
 ## 1. Install wrk
 
-From the root of this repo:
+Download the latest release into `~/.local/bin`:
 
 ```sh
-cargo install --path .
+mkdir -p ~/.local/bin
+curl -fsSL https://github.com/josh-sola/wrk/releases/latest/download/wrk-macos.tar.gz | tar -xz -C ~/.local/bin
 ```
 
+The binary runs on both Apple Silicon and Intel Macs. If `~/.local/bin` is not on your `PATH`, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` and open a new shell.
+
 Check: `wrk --help` prints the command list.
+
+Download with `curl`, not a browser. macOS blocks unsigned binaries that a browser downloads. If you already did, run `xattr -d com.apple.quarantine ~/.local/bin/wrk`.
+
+To build from source instead, run `cargo install --path .` from the root of this repo.
 
 ## 2. Copy in the hooks
 
