@@ -1,0 +1,26 @@
+#!/bin/sh
+. "$WRK_ROOT/hooks/lib.sh"
+
+link_plans
+
+# Reads CI's remote cache using the `turbo login` token, and shares one local
+# cache across every tree so a new tree starts warm.
+export TURBO_TEAM=sola-solutions
+export TURBO_CACHE=local:rw,remote:r
+export TURBO_CACHE_DIR="$HOME/.cache/turbo-sola"
+
+step pnpm install --frozen-lockfile
+step pnpm build:packages
+
+(cd python && step uv sync --all-packages)
+(cd python/datahub && step uv sync)
+(cd python/dspy-worker && step uv sync)
+(cd python/data-processing-worker && step uv sync)
+(cd python/scripts && step uv sync)
+
+# Last, because it needs a live AWS dev session: if the login below is not
+# finished, only this step fails and everything above is already in place.
+# The login opens a browser and waits for you to approve it there.
+export AWS_PROFILE=admin-dev-readonly
+aws sts get-caller-identity >/dev/null 2>&1 || step aws sso login
+step pnpm generate:env

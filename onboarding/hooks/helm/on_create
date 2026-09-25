@@ -1,0 +1,4 @@
+#!/bin/sh
+. "$WRK_ROOT/hooks/lib.sh"
+
+link_plans

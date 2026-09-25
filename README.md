@@ -8,6 +8,8 @@
 cargo install --path .
 ```
 
+To set up the Sola `monorepo` and `helm` repos with ready-made hooks, follow `onboarding/README.md`.
+
 ## Layout
 
 Everything lives under `$WRK_ROOT`, which defaults to `~/Library/wrk`:
