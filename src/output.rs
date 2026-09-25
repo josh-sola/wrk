@@ -53,6 +53,9 @@ pub enum WrkError {
 
     #[error("usage error: {0}")]
     Usage(String),
+
+    #[error("no terminal available")]
+    NoTerminal,
 }
 
 impl WrkError {
@@ -73,6 +76,7 @@ impl WrkError {
             WrkError::GitFailed(_) => "git_failed",
             WrkError::Io(_) => "io",
             WrkError::Usage(_) => "usage",
+            WrkError::NoTerminal => "no_terminal",
         }
     }
 

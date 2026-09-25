@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nucleo_matcher::{Config, Matcher};
 
-use super::filter::{clamp_selected, fuzzy_filter, is_ctrl, next_index, validate_tree_name};
+use super::filter::{clamp_selected, delete_word, fuzzy_filter, is_ctrl, validate_tree_name};
 use super::{GoTarget, PickInput, TreeRow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,7 +16,6 @@ pub(crate) enum Screen {
     Tree,
     NewRepo,
     NewName,
-    Harness,
 }
 
 /// Fields are `pub(crate)` so `view` can read them without a wall of getters.
@@ -27,40 +26,39 @@ pub struct App {
     pub(crate) trees: Vec<TreeRow>,
     pub(crate) repos: Vec<String>,
     pub(crate) harnesses: Vec<String>,
-    default_harness: Option<String>,
 
     pub(crate) tree_filter: String,
-    pub(crate) tree_matches: Vec<usize>,
+    pub(crate) tree_matches: Vec<(usize, Vec<u32>)>,
     pub(crate) tree_selected: usize,
 
     pub(crate) repo_filter: String,
-    pub(crate) repo_matches: Vec<usize>,
+    pub(crate) repo_matches: Vec<(usize, Vec<u32>)>,
     pub(crate) repo_selected: usize,
 
     pub(crate) new_tree_name: String,
     pub(crate) new_tree_error: Option<String>,
 
-    pub(crate) harness_filter: String,
-    pub(crate) harness_matches: Vec<usize>,
     pub(crate) harness_selected: usize,
 
-    target_repo: String,
-    target_tree: String,
-    target_new: bool,
-    harness_came_from_new: bool,
+    pub(crate) target_repo: String,
 }
 
 impl App {
     pub fn new(input: PickInput) -> Self {
-        let repo_matches: Vec<usize> = (0..input.repos.len()).collect();
-        let tree_matches: Vec<usize> = (0..input.trees.len()).collect();
+        let mut matcher = Matcher::new(Config::DEFAULT);
+        let tree_matches = fuzzy_filter(&mut matcher, "", &tree_labels(&input.trees));
+        let repo_matches = fuzzy_filter(&mut matcher, "", &input.repos);
+        let harness_selected = input
+            .default_harness
+            .as_ref()
+            .and_then(|default| input.harnesses.iter().position(|h| h == default))
+            .unwrap_or(0);
         App {
             screen: Screen::Tree,
-            matcher: Matcher::new(Config::DEFAULT),
+            matcher,
             trees: input.trees,
             repos: input.repos,
             harnesses: input.harnesses,
-            default_harness: input.default_harness,
             tree_filter: String::new(),
             tree_matches,
             tree_selected: 0,
@@ -69,13 +67,8 @@ impl App {
             repo_selected: 0,
             new_tree_name: String::new(),
             new_tree_error: None,
-            harness_filter: String::new(),
-            harness_matches: Vec::new(),
-            harness_selected: 0,
+            harness_selected,
             target_repo: String::new(),
-            target_tree: String::new(),
-            target_new: false,
-            harness_came_from_new: false,
         }
     }
 
@@ -83,12 +76,39 @@ impl App {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Step::Cancel;
         }
+        match key.code {
+            KeyCode::Tab => {
+                self.cycle_harness(1);
+                return Step::Continue;
+            }
+            KeyCode::BackTab => {
+                self.cycle_harness(-1);
+                return Step::Continue;
+            }
+            _ => {}
+        }
         match self.screen {
             Screen::Tree => self.handle_tree(key),
             Screen::NewRepo => self.handle_new_repo(key),
             Screen::NewName => self.handle_new_name(key),
-            Screen::Harness => self.handle_harness(key),
         }
+    }
+
+    fn cycle_harness(&mut self, delta: i32) {
+        let len = self.harnesses.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.harness_selected as i32;
+        let next = (current + delta).rem_euclid(len as i32);
+        self.harness_selected = next as usize;
+    }
+
+    fn current_harness(&self) -> String {
+        self.harnesses
+            .get(self.harness_selected)
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn handle_tree(&mut self, key: KeyEvent) -> Step {
@@ -104,6 +124,14 @@ impl App {
             KeyCode::Char('n') if is_ctrl(key) => {
                 self.tree_selected = (self.tree_selected + 1).min(self.tree_matches.len())
             }
+            KeyCode::Char('u') if is_ctrl(key) => {
+                self.tree_filter.clear();
+                self.refilter_trees();
+            }
+            KeyCode::Char('w') if is_ctrl(key) => {
+                delete_word(&mut self.tree_filter);
+                self.refilter_trees();
+            }
             KeyCode::Backspace => {
                 self.tree_filter.pop();
                 self.refilter_trees();
@@ -115,12 +143,13 @@ impl App {
             KeyCode::Enter => {
                 if self.tree_selected == 0 {
                     self.enter_new_repo();
-                } else if let Some(&idx) = self.tree_matches.get(self.tree_selected - 1) {
-                    self.target_repo = self.trees[idx].repo.clone();
-                    self.target_tree = self.trees[idx].tree.clone();
-                    self.target_new = false;
-                    self.harness_came_from_new = false;
-                    self.enter_harness();
+                } else if let Some(&(idx, _)) = self.tree_matches.get(self.tree_selected - 1) {
+                    return Step::Done(GoTarget {
+                        repo: self.trees[idx].repo.clone(),
+                        tree: self.trees[idx].tree.clone(),
+                        harness: self.current_harness(),
+                        new: false,
+                    });
                 }
             }
             _ => {}
@@ -133,13 +162,21 @@ impl App {
             KeyCode::Esc => self.screen = Screen::Tree,
             KeyCode::Up => self.repo_selected = self.repo_selected.saturating_sub(1),
             KeyCode::Down => {
-                self.repo_selected = next_index(self.repo_selected, self.repo_matches.len())
+                self.repo_selected = clamp_selected(self.repo_selected + 1, self.repo_matches.len())
             }
             KeyCode::Char('p') if is_ctrl(key) => {
                 self.repo_selected = self.repo_selected.saturating_sub(1)
             }
             KeyCode::Char('n') if is_ctrl(key) => {
-                self.repo_selected = next_index(self.repo_selected, self.repo_matches.len())
+                self.repo_selected = clamp_selected(self.repo_selected + 1, self.repo_matches.len())
+            }
+            KeyCode::Char('u') if is_ctrl(key) => {
+                self.repo_filter.clear();
+                self.refilter_repos();
+            }
+            KeyCode::Char('w') if is_ctrl(key) => {
+                delete_word(&mut self.repo_filter);
+                self.refilter_repos();
             }
             KeyCode::Backspace => {
                 self.repo_filter.pop();
@@ -150,7 +187,7 @@ impl App {
                 self.refilter_repos();
             }
             KeyCode::Enter => {
-                if let Some(&idx) = self.repo_matches.get(self.repo_selected) {
+                if let Some(&(idx, _)) = self.repo_matches.get(self.repo_selected) {
                     self.target_repo = self.repos[idx].clone();
                     self.new_tree_name = self.tree_filter.clone();
                     self.new_tree_error = None;
@@ -165,6 +202,14 @@ impl App {
     fn handle_new_name(&mut self, key: KeyEvent) -> Step {
         match key.code {
             KeyCode::Esc => self.screen = Screen::NewRepo,
+            KeyCode::Char('u') if is_ctrl(key) => {
+                self.new_tree_name.clear();
+                self.new_tree_error = None;
+            }
+            KeyCode::Char('w') if is_ctrl(key) => {
+                delete_word(&mut self.new_tree_name);
+                self.new_tree_error = None;
+            }
             KeyCode::Backspace => {
                 self.new_tree_name.pop();
                 self.new_tree_error = None;
@@ -175,10 +220,12 @@ impl App {
             }
             KeyCode::Enter => match validate_tree_name(&self.new_tree_name) {
                 Ok(()) => {
-                    self.target_tree = self.new_tree_name.clone();
-                    self.target_new = true;
-                    self.harness_came_from_new = true;
-                    self.enter_harness();
+                    return Step::Done(GoTarget {
+                        repo: self.target_repo.clone(),
+                        tree: self.new_tree_name.clone(),
+                        harness: self.current_harness(),
+                        new: true,
+                    });
                 }
                 Err(message) => self.new_tree_error = Some(message),
             },
@@ -187,69 +234,14 @@ impl App {
         Step::Continue
     }
 
-    fn handle_harness(&mut self, key: KeyEvent) -> Step {
-        match key.code {
-            KeyCode::Esc => {
-                self.screen = if self.harness_came_from_new {
-                    Screen::NewName
-                } else {
-                    Screen::Tree
-                };
-            }
-            KeyCode::Up => self.harness_selected = self.harness_selected.saturating_sub(1),
-            KeyCode::Down => {
-                self.harness_selected =
-                    next_index(self.harness_selected, self.harness_matches.len())
-            }
-            KeyCode::Char('p') if is_ctrl(key) => {
-                self.harness_selected = self.harness_selected.saturating_sub(1)
-            }
-            KeyCode::Char('n') if is_ctrl(key) => {
-                self.harness_selected =
-                    next_index(self.harness_selected, self.harness_matches.len())
-            }
-            KeyCode::Backspace => {
-                self.harness_filter.pop();
-                self.refilter_harnesses();
-            }
-            KeyCode::Char(c) if !is_ctrl(key) => {
-                self.harness_filter.push(c);
-                self.refilter_harnesses();
-            }
-            KeyCode::Enter => {
-                if let Some(&idx) = self.harness_matches.get(self.harness_selected) {
-                    return Step::Done(GoTarget {
-                        repo: self.target_repo.clone(),
-                        tree: self.target_tree.clone(),
-                        harness: self.harnesses[idx].clone(),
-                        new: self.target_new,
-                    });
-                }
-            }
-            _ => {}
-        }
-        Step::Continue
-    }
-
     fn enter_new_repo(&mut self) {
         self.repo_filter.clear();
-        self.repo_selected = 0;
         self.refilter_repos();
         self.screen = Screen::NewRepo;
     }
 
-    fn enter_harness(&mut self) {
-        self.harness_filter.clear();
-        self.refilter_harnesses();
-        self.screen = Screen::Harness;
-    }
-
     fn refilter_trees(&mut self) {
-        let labels: Vec<String> = self
-            .trees
-            .iter()
-            .map(|t| format!("{}/{}", t.repo, t.tree))
-            .collect();
+        let labels = tree_labels(&self.trees);
         self.tree_matches = fuzzy_filter(&mut self.matcher, &self.tree_filter, &labels);
         self.tree_selected = self.tree_selected.min(self.tree_matches.len());
     }
@@ -258,24 +250,13 @@ impl App {
         self.repo_matches = fuzzy_filter(&mut self.matcher, &self.repo_filter, &self.repos);
         self.repo_selected = clamp_selected(self.repo_selected, self.repo_matches.len());
     }
+}
 
-    fn refilter_harnesses(&mut self) {
-        self.harness_matches =
-            fuzzy_filter(&mut self.matcher, &self.harness_filter, &self.harnesses);
-        self.harness_selected = if self.harness_filter.is_empty() {
-            self.default_harness
-                .as_ref()
-                .and_then(|default| {
-                    self.harness_matches
-                        .iter()
-                        .position(|&i| &self.harnesses[i] == default)
-                })
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        self.harness_selected = clamp_selected(self.harness_selected, self.harness_matches.len());
-    }
+fn tree_labels(trees: &[TreeRow]) -> Vec<String> {
+    trees
+        .iter()
+        .map(|t| format!("{}/{}", t.repo, t.tree))
+        .collect()
 }
 
 #[cfg(test)]
@@ -330,20 +311,11 @@ mod tests {
     }
 
     #[test]
-    fn pick_existing_tree_then_harness() {
+    fn pick_existing_tree_returns_bar_harness() {
         let mut app = App::new(sample_input());
         assert_eq!(app.handle(key(KeyCode::Down)), Step::Continue);
         assert_eq!(app.screen, Screen::Tree);
         assert_eq!(app.tree_selected, 1);
-
-        assert_eq!(app.handle(key(KeyCode::Enter)), Step::Continue);
-        assert_eq!(app.screen, Screen::Harness);
-
-        // Default harness is preselected with an empty filter.
-        assert_eq!(
-            app.harnesses[app.harness_matches[app.harness_selected]],
-            "codex"
-        );
 
         let step = app.handle(key(KeyCode::Enter));
         assert_eq!(
@@ -359,14 +331,32 @@ mod tests {
 
     #[test]
     fn default_harness_is_preselected() {
+        let app = App::new(sample_input());
+        assert_eq!(app.harnesses[app.harness_selected], "codex");
+    }
+
+    #[test]
+    fn no_default_harness_preselects_the_first() {
+        let mut input = sample_input();
+        input.default_harness = None;
+        let app = App::new(input);
+        assert_eq!(app.harness_selected, 0);
+    }
+
+    #[test]
+    fn tab_and_backtab_cycle_and_wrap() {
         let mut app = App::new(sample_input());
-        app.target_repo = "wrk".into();
-        app.target_tree = "feature".into();
-        app.enter_harness();
-        assert_eq!(
-            app.harnesses[app.harness_matches[app.harness_selected]],
-            "codex"
-        );
+        assert_eq!(app.harnesses[app.harness_selected], "codex");
+
+        app.handle(key(KeyCode::Tab));
+        assert_eq!(app.harnesses[app.harness_selected], "pi");
+        app.handle(key(KeyCode::Tab));
+        assert_eq!(app.harnesses[app.harness_selected], "claude");
+
+        app.handle(key(KeyCode::BackTab));
+        assert_eq!(app.harnesses[app.harness_selected], "pi");
+        app.handle(key(KeyCode::BackTab));
+        assert_eq!(app.harnesses[app.harness_selected], "codex");
     }
 
     #[test]
@@ -377,7 +367,7 @@ mod tests {
         }
         // Only the bugfix row matches the full word.
         assert_eq!(app.tree_matches.len(), 1);
-        assert_eq!(app.trees[app.tree_matches[0]].tree, "bugfix");
+        assert_eq!(app.trees[app.tree_matches[0].0].tree, "bugfix");
 
         for _ in 0.."bugfix".len() {
             app.handle(key(KeyCode::Backspace));
@@ -392,23 +382,36 @@ mod tests {
         let matched: Vec<&str> = app
             .tree_matches
             .iter()
-            .map(|&i| app.trees[i].tree.as_str())
+            .map(|&(i, _)| app.trees[i].tree.as_str())
             .collect();
         assert_eq!(matched, vec!["foobar", "barfoo"]);
     }
 
     #[test]
-    fn new_tree_path_seeds_filter_text() {
+    fn new_tree_full_flow_seeds_name_and_returns_harness() {
         let mut app = App::new(sample_input());
         for c in "hotfix".chars() {
             app.handle(char_key(c));
         }
-        assert_eq!(app.handle(key(KeyCode::Enter)), Step::Continue); // + new tree (row 0 stays selected)
+        assert_eq!(app.handle(key(KeyCode::Enter)), Step::Continue); // + new tree
         assert_eq!(app.screen, Screen::NewRepo);
 
         assert_eq!(app.handle(key(KeyCode::Enter)), Step::Continue); // pick first repo
         assert_eq!(app.screen, Screen::NewName);
         assert_eq!(app.new_tree_name, "hotfix");
+        assert_eq!(app.target_repo, "wrk");
+
+        app.handle(key(KeyCode::Tab)); // switch off the default harness
+        let step = app.handle(key(KeyCode::Enter));
+        assert_eq!(
+            step,
+            Step::Done(GoTarget {
+                repo: "wrk".into(),
+                tree: "hotfix".into(),
+                harness: "pi".into(),
+                new: true,
+            })
+        );
     }
 
     #[test]
@@ -431,8 +434,42 @@ mod tests {
         for c in "goodname".chars() {
             app.handle(char_key(c));
         }
-        assert_eq!(app.handle(key(KeyCode::Enter)), Step::Continue);
-        assert_eq!(app.screen, Screen::Harness);
+        let step = app.handle(key(KeyCode::Enter));
+        assert!(matches!(step, Step::Done(_)));
+    }
+
+    #[test]
+    fn ctrl_u_clears_the_active_field() {
+        let mut app = App::new(sample_input());
+        for c in "feat".chars() {
+            app.handle(char_key(c));
+        }
+        app.handle(ctrl('u'));
+        assert_eq!(app.tree_filter, "");
+
+        app.enter_new_repo();
+        for c in "wr".chars() {
+            app.handle(char_key(c));
+        }
+        app.handle(ctrl('u'));
+        assert_eq!(app.repo_filter, "");
+
+        app.handle(key(KeyCode::Enter));
+        for c in "name".chars() {
+            app.handle(char_key(c));
+        }
+        app.handle(ctrl('u'));
+        assert_eq!(app.new_tree_name, "");
+    }
+
+    #[test]
+    fn ctrl_w_deletes_the_previous_word() {
+        let mut app = App::new(sample_input());
+        for c in "feat fix".chars() {
+            app.handle(char_key(c));
+        }
+        app.handle(ctrl('w'));
+        assert_eq!(app.tree_filter, "feat ");
     }
 
     #[test]
@@ -450,28 +487,6 @@ mod tests {
         assert_eq!(app.screen, Screen::Tree);
 
         assert_eq!(app.handle(key(KeyCode::Esc)), Step::Cancel);
-    }
-
-    #[test]
-    fn esc_from_harness_returns_to_the_right_screen() {
-        let mut app = App::new(sample_input());
-        // Existing-tree path returns to Tree.
-        app.handle(key(KeyCode::Down));
-        app.handle(key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::Harness);
-        app.handle(key(KeyCode::Esc));
-        assert_eq!(app.screen, Screen::Tree);
-
-        // New-tree path returns to NewName.
-        app.enter_new_repo();
-        app.handle(key(KeyCode::Enter));
-        for c in "feat".chars() {
-            app.handle(char_key(c));
-        }
-        app.handle(key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::Harness);
-        app.handle(key(KeyCode::Esc));
-        assert_eq!(app.screen, Screen::NewName);
     }
 
     #[test]

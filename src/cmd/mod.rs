@@ -5,5 +5,6 @@ pub mod logs;
 pub mod ls;
 pub mod new;
 pub mod path;
+pub mod pick;
 pub mod rm;
 pub mod wait;

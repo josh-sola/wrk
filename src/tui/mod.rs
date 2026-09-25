@@ -1,11 +1,21 @@
 mod filter;
 mod state;
+mod style;
 mod view;
 
+use std::fs::{File, OpenOptions};
+
 use crossterm::event::{Event, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::output::WrkError;
 use state::{App, Step};
+use style::Palette;
 
 pub struct TreeRow {
     pub repo: String,
@@ -28,12 +38,15 @@ pub struct GoTarget {
     pub new: bool,
 }
 
+/// Draws on `/dev/tty`, never stdout, so `wrk pick --json` output stays clean.
 pub fn pick(input: PickInput) -> Result<Option<GoTarget>, WrkError> {
     let mut terminal = TerminalGuard::new()?;
     let mut app = App::new(input);
+    let no_color = std::env::var("NO_COLOR").is_ok_and(|v| !v.is_empty());
+    let palette = Palette::new(no_color);
 
     loop {
-        terminal.draw(|frame| view::render(frame, &app))?;
+        terminal.draw(|frame| view::render(frame, &app, &palette))?;
 
         let Event::Key(key) = crossterm::event::read()? else {
             continue;
@@ -50,26 +63,32 @@ pub fn pick(input: PickInput) -> Result<Option<GoTarget>, WrkError> {
     }
 }
 
-/// Owns the alternate screen and raw mode for the picker's lifetime. `Drop`
-/// restores the terminal on every exit path, including an early return from
-/// an `Err` and an unwind through `pick`.
+fn open_tty() -> std::io::Result<File> {
+    OpenOptions::new().read(true).write(true).open("/dev/tty")
+}
+
+/// `Drop` restores the tty on every exit path, including an early `Err`
+/// return and an unwind.
 struct TerminalGuard {
-    terminal: ratatui::DefaultTerminal,
+    terminal: Terminal<CrosstermBackend<File>>,
 }
 
 impl TerminalGuard {
-    fn new() -> std::io::Result<Self> {
-        // `try_init` also installs a panic hook that restores the terminal
-        // before the default hook runs, covering the case where the guard's
-        // `Drop` never gets a chance to.
+    fn new() -> Result<Self, WrkError> {
+        let tty = open_tty().map_err(|_| WrkError::NoTerminal)?;
+        // Installed before touching the terminal so a panic during setup
+        // itself still restores whatever state `enable_raw_mode` reached.
+        set_panic_hook();
+        enable_raw_mode()?;
+        execute!(tty.try_clone()?, EnterAlternateScreen)?;
         Ok(Self {
-            terminal: ratatui::try_init()?,
+            terminal: Terminal::new(CrosstermBackend::new(tty))?,
         })
     }
 }
 
 impl std::ops::Deref for TerminalGuard {
-    type Target = ratatui::DefaultTerminal;
+    type Target = Terminal<CrosstermBackend<File>>;
 
     fn deref(&self) -> &Self::Target {
         &self.terminal
@@ -84,6 +103,23 @@ impl std::ops::DerefMut for TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        ratatui::restore();
+        let _ = disable_raw_mode();
+        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
     }
+}
+
+/// Reopens `/dev/tty` because the panic hook cannot reach the guard's handle.
+fn restore_tty() {
+    let _ = disable_raw_mode();
+    if let Ok(mut tty) = open_tty() {
+        let _ = execute!(tty, LeaveAlternateScreen);
+    }
+}
+
+fn set_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_tty();
+        previous(info);
+    }));
 }

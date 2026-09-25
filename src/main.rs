@@ -54,6 +54,11 @@ enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Open the picker and print the selection without launching anything.
+    Pick {
+        #[arg(long)]
+        json: bool,
+    },
     /// List repos and trees.
     Ls {
         repo: Option<String>,
@@ -122,6 +127,7 @@ fn main() {
             new,
             args,
         } => wrk::cmd::go::run(&paths, repo, tree, harness, new, args),
+        Command::Pick { json } => wrk::cmd::pick::run(&paths, json),
         Command::Ls { repo, json } => wrk::cmd::ls::run(&paths, repo.as_deref(), json),
         Command::Logs {
             repo,

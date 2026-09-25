@@ -48,35 +48,12 @@ fn run_tui(paths: &Paths, extra_args: &[String]) -> i32 {
         return 1;
     }
 
-    let config = match config::load(paths) {
-        Ok(c) => c,
+    let input = match pick_input(paths) {
+        Ok(i) => i,
         Err(e) => {
             output::print_error_human(&e);
             return 1;
         }
-    };
-    let trees = match tree_rows(paths) {
-        Ok(t) => t,
-        Err(e) => {
-            output::print_error_human(&e);
-            return 1;
-        }
-    };
-    let repos = match resolve::repos(paths) {
-        Ok(r) => r,
-        Err(e) => {
-            output::print_error_human(&e);
-            return 1;
-        }
-    };
-    let mut harnesses: Vec<String> = config.harnesses.keys().cloned().collect();
-    harnesses.sort();
-
-    let input = PickInput {
-        trees,
-        repos,
-        harnesses,
-        default_harness: Some(config.default_harness.clone()),
     };
 
     let target = match tui::pick(input) {
@@ -96,6 +73,22 @@ fn run_tui(paths: &Paths, extra_args: &[String]) -> i32 {
         target.new,
         extra_args,
     )
+}
+
+/// Shared by `go` and `pick` so both list trees and statuses the same way.
+pub(crate) fn pick_input(paths: &Paths) -> Result<PickInput, WrkError> {
+    let config = config::load(paths)?;
+    let trees = tree_rows(paths)?;
+    let repos = resolve::repos(paths)?;
+    let mut harnesses: Vec<String> = config.harnesses.keys().cloned().collect();
+    harnesses.sort();
+
+    Ok(PickInput {
+        trees,
+        repos,
+        harnesses,
+        default_harness: Some(config.default_harness.clone()),
+    })
 }
 
 /// Every tree across every repo, with the status `ls` would show for it.
