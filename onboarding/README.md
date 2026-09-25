@@ -83,15 +83,15 @@ wrk rm monorepo onboarding-test
 
 ## 6. Install the wrk skill
 
-`skills/wrk/SKILL.md` teaches an agent to use `wrk`: create trees, wait for hooks, and clean up. Copy it into each agent's skills folder:
+`skills/wrk/SKILL.md` teaches an agent to use `wrk`: create trees, wait for hooks, and clean up. Codex and Pi read skills from `~/.agents/skills`. Claude reads `~/.claude/skills`, so link it there too:
 
 ```sh
-mkdir -p ~/.claude/skills && cp -R skills/wrk ~/.claude/skills/
+mkdir -p ~/.agents/skills ~/.claude/skills
+cp -R skills/wrk ~/.agents/skills/
+ln -s ../../.agents/skills/wrk ~/.claude/skills/wrk
 ```
 
-Codex and Pi read the same format. Copy the folder into their skills folders too if you use them.
-
-Check: a new Claude session lists `wrk` among its skills.
+Check: a new Claude, Codex, or Pi session lists `wrk` among its skills.
 
 ## Daily use
 
