@@ -13,7 +13,7 @@ curl -fsSL https://github.com/josh-sola/wrk/releases/latest/download/wrk-macos.t
 
 Or build from source with `cargo install --path .`
 
-To cut a release, bump `version` in `Cargo.toml`, then push a matching tag such as `v0.2.0`. The `release` workflow checks, builds, and publishes it.
+To cut a release, bump `version` in `Cargo.toml` and push to `main`. The `release` workflow sees the new version, then checks, builds, tags, and publishes it. Pushes that don't change the version skip the build.
 
 To set up the Sola `monorepo` and `helm` repos with ready-made hooks, follow `onboarding/README.md`.
 
