@@ -165,13 +165,13 @@ fn go_unknown_harness_errors_and_creates_no_tree() {
 }
 
 #[test]
-fn go_hook_failure_blocks_the_harness_and_exits_one() {
+fn go_wait_blocks_the_harness_on_hook_failure_and_exits_one() {
     let env = Env::new();
     let repo = clone_default(&env);
     let out = setup_fake_harness(&env);
     env.write_hook(&repo, "on_create", "#!/bin/sh\nexit 3\n");
 
-    env.cmd(&["go", &repo, "t1", "fake"])
+    env.cmd(&["go", &repo, "t1", "fake", "--wait"])
         .assert()
         .failure()
         .code(1)
@@ -220,4 +220,39 @@ fn go_new_without_positionals_is_a_usage_error() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("--new needs"));
+}
+
+#[test]
+fn go_launches_without_waiting_for_a_running_hook() {
+    let env = Env::new();
+    let repo = clone_default(&env);
+    let out = setup_fake_harness(&env);
+    env.write_hook(&repo, "on_create", "#!/bin/sh\nsleep 5\n");
+
+    let started = std::time::Instant::now();
+    env.cmd(&["go", &repo, "t1", "fake"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("still running"));
+
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    assert!(out.join("cwd").exists());
+}
+
+#[test]
+fn go_launches_after_a_failed_hook_with_a_warning() {
+    let env = Env::new();
+    let repo = clone_default(&env);
+    let out = setup_fake_harness(&env);
+    env.write_hook(&repo, "on_create", "#!/bin/sh\nexit 3\n");
+    env.cmd(&["new", &repo, "t1", "--wait"]).assert().code(1);
+
+    env.cmd(&["go", &repo, "t1", "fake"])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("on_create failed").and(predicate::str::contains("log at")),
+        );
+
+    assert!(out.join("cwd").exists());
 }

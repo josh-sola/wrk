@@ -18,6 +18,7 @@ pub fn run(
     tree: Option<String>,
     harness_name: Option<String>,
     new_tree: bool,
+    wait_for_hook: bool,
     extra_args: Vec<String>,
 ) -> i32 {
     match (repo, tree, harness_name) {
@@ -26,10 +27,16 @@ pub fn run(
             output::print_error_human(&err);
             1
         }
-        (None, None, None) => run_tui(paths, &extra_args),
-        (Some(repo), Some(tree), Some(harness_name)) => {
-            go(paths, &repo, &tree, &harness_name, new_tree, &extra_args)
-        }
+        (None, None, None) => run_tui(paths, wait_for_hook, &extra_args),
+        (Some(repo), Some(tree), Some(harness_name)) => go(
+            paths,
+            &repo,
+            &tree,
+            &harness_name,
+            new_tree,
+            wait_for_hook,
+            &extra_args,
+        ),
         _ => {
             let err = WrkError::Usage(
                 "wrk go needs all three of <repo> <tree> <harness>, or none of them".to_string(),
@@ -40,7 +47,7 @@ pub fn run(
     }
 }
 
-fn run_tui(paths: &Paths, extra_args: &[String]) -> i32 {
+fn run_tui(paths: &Paths, wait_for_hook: bool, extra_args: &[String]) -> i32 {
     if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         let err =
             WrkError::Usage("wrk go needs a terminal; pass <repo> <tree> <harness>".to_string());
@@ -71,6 +78,7 @@ fn run_tui(paths: &Paths, extra_args: &[String]) -> i32 {
         &target.tree,
         &target.harness,
         target.new,
+        wait_for_hook,
         extra_args,
     )
 }
@@ -115,6 +123,7 @@ fn go(
     tree_prefix: &str,
     harness_prefix: &str,
     new_tree: bool,
+    wait_for_hook: bool,
     extra_args: &[String],
 ) -> i32 {
     let config = match config::load(paths) {
@@ -158,27 +167,13 @@ fn go(
         }
     };
 
-    let status = match state::read_status(paths, &repo, &tree) {
-        Ok(s) => s,
-        Err(e) => {
-            output::print_error_human(&e);
-            return 1;
-        }
+    let result = if wait_for_hook {
+        wait_before_launch(paths, &repo, &tree)
+    } else {
+        note_hook_status(paths, &repo, &tree)
     };
-    if matches!(status.status, HookStatus::Pending | HookStatus::Running) {
-        eprintln!("go: waiting for on_create…");
-    }
-
-    let outcome = match wait(paths, &repo, &tree, None) {
-        Ok(o) => o,
-        Err(e) => {
-            output::print_error_human(&e);
-            return 1;
-        }
-    };
-    if matches!(outcome, Outcome::Failed | Outcome::Crashed) {
-        eprintln!("go: log at {}", paths.tree_log(&repo, &tree).display());
-        return outcome.exit_code();
+    if let Err(code) = result {
+        return code;
     }
 
     let tree_path = paths.tree(&repo, &tree);
@@ -186,4 +181,41 @@ fn go(
     let err = harness::exec_in(&harness, &tree_path, env, extra_args);
     output::print_error_human(&err);
     1
+}
+
+fn wait_before_launch(paths: &Paths, repo: &str, tree: &str) -> Result<(), i32> {
+    let status = state::read_status(paths, repo, tree).map_err(|e| {
+        output::print_error_human(&e);
+        1
+    })?;
+    if matches!(status.status, HookStatus::Pending | HookStatus::Running) {
+        eprintln!("go: waiting for on_create…");
+    }
+    let outcome = wait(paths, repo, tree, None).map_err(|e| {
+        output::print_error_human(&e);
+        1
+    })?;
+    if matches!(outcome, Outcome::Failed | Outcome::Crashed) {
+        eprintln!("go: log at {}", paths.tree_log(repo, tree).display());
+        return Err(outcome.exit_code());
+    }
+    Ok(())
+}
+
+fn note_hook_status(paths: &Paths, repo: &str, tree: &str) -> Result<(), i32> {
+    let status = ls::effective_status(paths, repo, tree).map_err(|e| {
+        output::print_error_human(&e);
+        1
+    })?;
+    let log = paths.tree_log(repo, tree);
+    match status {
+        "pending" | "running" => {
+            eprintln!("go: on_create is still running; follow it with `wrk logs -f {repo} {tree}`")
+        }
+        "failed" | "crashed" => {
+            eprintln!("go: on_create {status}; log at {}", log.display())
+        }
+        _ => {}
+    }
+    Ok(())
 }

@@ -31,7 +31,7 @@ To try the picker with fake data: `cargo run --example pick_demo`. It needs a re
 - **The filesystem is the source of truth.** A repo or tree exists if its folder exists. Don't add a registry.
 - **Liveness is the flock, not a PID.** The hook runner holds an exclusive lock on `state/trees/<repo>/<tree>.lock` for its whole life. A `running` status with a free lock means the runner crashed. Don't add PID liveness checks.
 - **The runner is double-forked** so it is never a child of `wrk`. `go` execs the harness in its own place, and the harness would never reap the runner. Keep `spawn_runner` that way.
-- **`go` has one create → wait → exec path** (the private `go` function in `src/cmd/go.rs`). The picker returns a `GoTarget` and hands off to it. Don't add a second launch path. `pick` returns the same `GoTarget` but never hands off to it — it only prints the selection.
+- **`go` has one create → exec path, with an optional wait** (the private `go` function in `src/cmd/go.rs`). The picker returns a `GoTarget` and hands off to it. Don't add a second launch path. `pick` returns the same `GoTarget` but never hands off to it — it only prints the selection.
 - **JSON:** each command with `--json` prints exactly one document on stdout, with snake_case keys. Errors in JSON mode also go to stdout. Progress lines always go to stderr. `go` has no `--json`.
 - **Out of scope:** submodule handling, Graphite, and terminal or window-manager integrations. Hooks cover provisioning.
 

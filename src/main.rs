@@ -51,6 +51,9 @@ enum Command {
         harness: Option<String>,
         #[arg(long)]
         new: bool,
+        /// Wait for on_create to finish, and don't launch if it failed.
+        #[arg(long)]
+        wait: bool,
         #[arg(last = true)]
         args: Vec<String>,
     },
@@ -125,8 +128,9 @@ fn main() {
             tree,
             harness,
             new,
+            wait,
             args,
-        } => wrk::cmd::go::run(&paths, repo, tree, harness, new, args),
+        } => wrk::cmd::go::run(&paths, repo, tree, harness, new, wait, args),
         Command::Pick { json } => wrk::cmd::pick::run(&paths, json),
         Command::Ls { repo, json } => wrk::cmd::ls::run(&paths, repo.as_deref(), json),
         Command::Logs {
