@@ -256,3 +256,40 @@ fn go_launches_after_a_failed_hook_with_a_warning() {
 
     assert!(out.join("cwd").exists());
 }
+
+#[test]
+fn go_track_checks_out_the_remote_branch_when_creating() {
+    let env = Env::new();
+    let bare = env.origin("proj", &["feature"]);
+    let url = env.origin_url(&bare);
+    env.cmd(&["clone", &url]).assert().success();
+    setup_fake_harness(&env);
+
+    env.cmd(&["go", "proj", "feature", "fake", "--track"])
+        .assert()
+        .success();
+
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "@{u}"])
+        .current_dir(env.tree_path("proj", "feature"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "origin/feature"
+    );
+}
+
+#[test]
+fn go_hints_when_it_ignores_a_remote_branch() {
+    let env = Env::new();
+    let bare = env.origin("proj", &["feature"]);
+    let url = env.origin_url(&bare);
+    env.cmd(&["clone", &url]).assert().success();
+    setup_fake_harness(&env);
+
+    env.cmd(&["go", "proj", "feature", "fake"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("origin/feature exists"));
+}

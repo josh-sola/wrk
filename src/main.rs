@@ -21,6 +21,9 @@ enum Command {
     New {
         repo: String,
         tree: String,
+        /// Check out origin/<tree> instead of branching from origin's default branch.
+        #[arg(long)]
+        track: bool,
         #[arg(long)]
         wait: bool,
         #[arg(long)]
@@ -54,6 +57,12 @@ enum Command {
         /// Wait for on_create to finish, and don't launch if it failed.
         #[arg(long)]
         wait: bool,
+        /// When creating the tree, check out origin/<tree> instead of branching fresh.
+        #[arg(long)]
+        track: bool,
+        /// Fill the whole terminal with the picker instead of a centered panel.
+        #[arg(long)]
+        fill: bool,
         #[arg(last = true)]
         args: Vec<String>,
     },
@@ -61,6 +70,9 @@ enum Command {
     Pick {
         #[arg(long)]
         json: bool,
+        /// Fill the whole terminal instead of drawing a centered panel.
+        #[arg(long)]
+        fill: bool,
     },
     /// List repos and trees.
     Ls {
@@ -108,9 +120,10 @@ fn main() {
         Command::New {
             repo,
             tree,
+            track,
             wait,
             json,
-        } => wrk::cmd::new::run(&paths, &repo, &tree, wait, json),
+        } => wrk::cmd::new::run(&paths, &repo, &tree, track, wait, json),
         Command::Rm {
             repo,
             tree,
@@ -129,9 +142,30 @@ fn main() {
             harness,
             new,
             wait,
+            track,
+            fill,
             args,
-        } => wrk::cmd::go::run(&paths, repo, tree, harness, new, wait, args),
-        Command::Pick { json } => wrk::cmd::pick::run(&paths, json),
+        } => wrk::cmd::go::run(
+            &paths,
+            repo,
+            tree,
+            harness,
+            wrk::cmd::go::GoFlags {
+                new_tree: new,
+                wait,
+                track,
+                fill,
+            },
+            args,
+        ),
+        Command::Pick { json, fill } => {
+            let sizing = if fill {
+                wrk::tui::Sizing::Fill
+            } else {
+                wrk::tui::Sizing::Centered
+            };
+            wrk::cmd::pick::run(&paths, json, sizing)
+        }
         Command::Ls { repo, json } => wrk::cmd::ls::run(&paths, repo.as_deref(), json),
         Command::Logs {
             repo,

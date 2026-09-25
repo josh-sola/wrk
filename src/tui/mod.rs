@@ -38,15 +38,22 @@ pub struct GoTarget {
     pub new: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sizing {
+    Centered,
+    /// Uses every cell, for hosts such as popups that already pad the picker.
+    Fill,
+}
+
 /// Draws on `/dev/tty`, never stdout, so `wrk pick --json` output stays clean.
-pub fn pick(input: PickInput) -> Result<Option<GoTarget>, WrkError> {
+pub fn pick(input: PickInput, sizing: Sizing) -> Result<Option<GoTarget>, WrkError> {
     let mut terminal = TerminalGuard::new()?;
     let mut app = App::new(input);
     let no_color = std::env::var("NO_COLOR").is_ok_and(|v| !v.is_empty());
     let palette = Palette::new(no_color);
 
     loop {
-        terminal.draw(|frame| view::render(frame, &app, &palette))?;
+        terminal.draw(|frame| view::render(frame, &app, &palette, sizing))?;
 
         let Event::Key(key) = crossterm::event::read()? else {
             continue;

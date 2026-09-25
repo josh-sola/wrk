@@ -17,7 +17,7 @@ struct Selection {
     command: Vec<String>,
 }
 
-pub fn run(paths: &Paths, json: bool) -> i32 {
+pub fn run(paths: &Paths, json: bool, sizing: tui::Sizing) -> i32 {
     let input = match go::pick_input(paths) {
         Ok(i) => i,
         Err(e) => {
@@ -26,7 +26,7 @@ pub fn run(paths: &Paths, json: bool) -> i32 {
         }
     };
 
-    let target = match tui::pick(input) {
+    let target = match tui::pick(input, sizing) {
         Ok(Some(target)) => target,
         Ok(None) => {
             if json {

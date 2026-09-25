@@ -12,31 +12,32 @@ use crate::resolve::{self, TreeMatch};
 use crate::state::{self, HookStatus};
 use crate::tui::{self, PickInput, TreeRow};
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GoFlags {
+    pub new_tree: bool,
+    pub wait: bool,
+    pub track: bool,
+    pub fill: bool,
+}
+
 pub fn run(
     paths: &Paths,
     repo: Option<String>,
     tree: Option<String>,
     harness_name: Option<String>,
-    new_tree: bool,
-    wait_for_hook: bool,
+    flags: GoFlags,
     extra_args: Vec<String>,
 ) -> i32 {
     match (repo, tree, harness_name) {
-        (None, None, None) if new_tree => {
+        (None, None, None) if flags.new_tree => {
             let err = WrkError::Usage("--new needs <repo> <tree> <harness>".to_string());
             output::print_error_human(&err);
             1
         }
-        (None, None, None) => run_tui(paths, wait_for_hook, &extra_args),
-        (Some(repo), Some(tree), Some(harness_name)) => go(
-            paths,
-            &repo,
-            &tree,
-            &harness_name,
-            new_tree,
-            wait_for_hook,
-            &extra_args,
-        ),
+        (None, None, None) => run_tui(paths, flags, &extra_args),
+        (Some(repo), Some(tree), Some(harness_name)) => {
+            go(paths, &repo, &tree, &harness_name, flags, &extra_args)
+        }
         _ => {
             let err = WrkError::Usage(
                 "wrk go needs all three of <repo> <tree> <harness>, or none of them".to_string(),
@@ -47,7 +48,7 @@ pub fn run(
     }
 }
 
-fn run_tui(paths: &Paths, wait_for_hook: bool, extra_args: &[String]) -> i32 {
+fn run_tui(paths: &Paths, flags: GoFlags, extra_args: &[String]) -> i32 {
     if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         let err =
             WrkError::Usage("wrk go needs a terminal; pass <repo> <tree> <harness>".to_string());
@@ -63,7 +64,12 @@ fn run_tui(paths: &Paths, wait_for_hook: bool, extra_args: &[String]) -> i32 {
         }
     };
 
-    let target = match tui::pick(input) {
+    let sizing = if flags.fill {
+        tui::Sizing::Fill
+    } else {
+        tui::Sizing::Centered
+    };
+    let target = match tui::pick(input, sizing) {
         Ok(Some(target)) => target,
         Ok(None) => return 130,
         Err(e) => {
@@ -72,13 +78,16 @@ fn run_tui(paths: &Paths, wait_for_hook: bool, extra_args: &[String]) -> i32 {
         }
     };
 
+    let flags = GoFlags {
+        new_tree: target.new,
+        ..flags
+    };
     go(
         paths,
         &target.repo,
         &target.tree,
         &target.harness,
-        target.new,
-        wait_for_hook,
+        flags,
         extra_args,
     )
 }
@@ -122,8 +131,7 @@ fn go(
     repo_prefix: &str,
     tree_prefix: &str,
     harness_prefix: &str,
-    new_tree: bool,
-    wait_for_hook: bool,
+    flags: GoFlags,
     extra_args: &[String],
 ) -> i32 {
     let config = match config::load(paths) {
@@ -148,7 +156,7 @@ fn go(
         }
     };
 
-    let tree_match = match resolve::resolve_or_new(paths, &repo, tree_prefix, new_tree) {
+    let tree_match = match resolve::resolve_or_new(paths, &repo, tree_prefix, flags.new_tree) {
         Ok(m) => m,
         Err(e) => {
             output::print_error_human(&e);
@@ -159,15 +167,18 @@ fn go(
         TreeMatch::Existing(name) => name,
         TreeMatch::Create(name) => {
             eprintln!("go: creating {repo}/{name}");
-            if let Err(e) = new::create(paths, &repo, &name) {
-                output::print_error_human(&e);
-                return 1;
+            match new::create(paths, &repo, &name, flags.track) {
+                Ok(created) => new::print_ignored_remote_hint("go", &created),
+                Err(e) => {
+                    output::print_error_human(&e);
+                    return 1;
+                }
             }
             name
         }
     };
 
-    let result = if wait_for_hook {
+    let result = if flags.wait {
         wait_before_launch(paths, &repo, &tree)
     } else {
         note_hook_status(paths, &repo, &tree)

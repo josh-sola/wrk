@@ -16,12 +16,31 @@ pub struct Created {
     pub tree: String,
     pub path: PathBuf,
     pub branch: String,
+    pub branch_source: BranchSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ignored_remote_branch: Option<IgnoredRemote>,
     pub hook_status: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BranchSource {
+    Local,
+    Remote,
+    New,
+}
+
+/// A same-named `origin` branch that a fresh tree did not use.
+#[derive(Debug, Serialize)]
+pub struct IgnoredRemote {
+    pub name: String,
+    pub last_commit: String,
+}
+
 /// Creates a tree for an already-resolved repo. `tree` is used literally,
-/// never prefix-matched.
-pub fn create(paths: &Paths, repo: &str, tree: &str) -> Result<Created, WrkError> {
+/// never prefix-matched. A same-named `origin` branch is only used with
+/// `track`, because common names often match someone's stale branch.
+pub fn create(paths: &Paths, repo: &str, tree: &str, track: bool) -> Result<Created, WrkError> {
     validate_name(Kind::Tree, tree)?;
     if !git::check_ref_format(tree)? {
         return Err(WrkError::InvalidName(format!(
@@ -31,7 +50,8 @@ pub fn create(paths: &Paths, repo: &str, tree: &str) -> Result<Created, WrkError
 
     let tree_path = paths.tree(repo, tree);
     let repo_path = paths.repo(repo);
-    {
+    let mut ignored_remote_branch = None;
+    let branch_source = {
         let lock_path = paths.repo_lock(repo);
         let _lock = crate::state::Lock::acquire_exclusive(&lock_path)?;
 
@@ -42,15 +62,28 @@ pub fn create(paths: &Paths, repo: &str, tree: &str) -> Result<Created, WrkError
         git::fetch_prune(&repo_path)?;
         paths::ensure_dir(&paths.repo_trees_dir(repo))?;
 
+        let remote_exists = git::remote_branch_exists(&repo_path, tree)?;
         if git::local_branch_exists(&repo_path, tree)? {
             git::worktree_add(&repo_path, &tree_path, tree)?;
-        } else if git::remote_branch_exists(&repo_path, tree)? {
+            BranchSource::Local
+        } else if track {
+            if !remote_exists {
+                return Err(WrkError::NotFound(format!("origin/{tree} to track")));
+            }
             git::worktree_add_track(&repo_path, &tree_path, tree, &format!("origin/{tree}"))?;
+            BranchSource::Remote
         } else {
+            if remote_exists {
+                ignored_remote_branch = Some(IgnoredRemote {
+                    name: format!("origin/{tree}"),
+                    last_commit: git::remote_branch_summary(&repo_path, tree)?,
+                });
+            }
             let default = git::default_branch(&repo_path)?;
             git::worktree_add_new(&repo_path, &tree_path, tree, &format!("origin/{default}"))?;
+            BranchSource::New
         }
-    }
+    };
 
     let hook_status = hooks::start_on_create(paths, repo, tree)?;
     Ok(Created {
@@ -58,11 +91,20 @@ pub fn create(paths: &Paths, repo: &str, tree: &str) -> Result<Created, WrkError
         tree: tree.to_string(),
         path: tree_path,
         branch: tree.to_string(),
+        branch_source,
+        ignored_remote_branch,
         hook_status: hook_status.as_str(),
     })
 }
 
-pub fn run(paths: &Paths, repo_prefix: &str, tree: &str, wait_for_hook: bool, json: bool) -> i32 {
+pub fn run(
+    paths: &Paths,
+    repo_prefix: &str,
+    tree: &str,
+    track: bool,
+    wait_for_hook: bool,
+    json: bool,
+) -> i32 {
     let repo = match resolve::resolve_repo(paths, repo_prefix) {
         Ok(r) => r,
         Err(e) => {
@@ -72,13 +114,14 @@ pub fn run(paths: &Paths, repo_prefix: &str, tree: &str, wait_for_hook: bool, js
     };
 
     eprintln!("new: creating {repo}/{tree}");
-    let mut created = match create(paths, &repo, tree) {
+    let mut created = match create(paths, &repo, tree, track) {
         Ok(c) => c,
         Err(e) => {
             output::emit_error(json, &e);
             return 1;
         }
     };
+    print_ignored_remote_hint("new", &created);
 
     if !wait_for_hook {
         emit_created(&created, None, json);
@@ -126,5 +169,14 @@ fn emit_created(created: &Created, outcome: Option<Outcome>, json: bool) {
         eprintln!("new: hook {}", outcome.as_str());
     } else if created.hook_status != HookStatus::None.as_str() {
         eprintln!("new: hook {}", created.hook_status);
+    }
+}
+
+pub fn print_ignored_remote_hint(prefix: &str, created: &Created) {
+    if let Some(remote) = &created.ignored_remote_branch {
+        eprintln!(
+            "{prefix}: made a fresh branch; {} exists (last commit {}). Use --track to check it out instead.",
+            remote.name, remote.last_commit
+        );
     }
 }

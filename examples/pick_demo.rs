@@ -1,5 +1,5 @@
 //! Manual try-out for the `wrk go` picker: `cargo run --example pick_demo`.
-use wrk::tui::{PickInput, TreeRow, pick};
+use wrk::tui::{PickInput, Sizing, TreeRow, pick};
 
 fn main() {
     let input = PickInput {
@@ -45,7 +45,12 @@ fn main() {
         default_harness: Some("claude".to_string()),
     };
 
-    match pick(input) {
+    let sizing = if std::env::args().any(|a| a == "--fill") {
+        Sizing::Fill
+    } else {
+        Sizing::Centered
+    };
+    match pick(input, sizing) {
         Ok(Some(target)) => println!("picked: {target:?}"),
         Ok(None) => println!("cancelled"),
         Err(err) => eprintln!("error: {err}"),

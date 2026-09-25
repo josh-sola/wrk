@@ -23,21 +23,73 @@ fn new_on_default_branch_name_works_despite_detached_clone() {
     assert!(env.tree_path(&repo, "main").join("README.md").exists());
 }
 
+fn upstream(tree: &std::path::Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "@{u}"])
+        .current_dir(tree)
+        .output()
+        .unwrap();
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn json_of(output: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 #[test]
-fn new_tracks_existing_remote_branch() {
+fn new_ignores_a_same_named_remote_branch_by_default() {
     let env = Env::new();
     let repo = clone_default(&env);
 
-    env.cmd(&["new", &repo, "feature"]).assert().success();
-    let tree = env.tree_path(&repo, "feature");
-    assert!(tree.exists());
-
-    let branch = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(&tree)
+    let out = env
+        .cmd(&["new", &repo, "feature", "--json"])
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8_lossy(&branch.stdout).trim(), "feature");
+    assert!(out.status.success());
+    let value = json_of(&out);
+    assert_eq!(value["branch"], "feature");
+    assert_eq!(value["branch_source"], "new");
+    assert_eq!(value["ignored_remote_branch"]["name"], "origin/feature");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("Use --track"),
+        "stderr should hint at --track"
+    );
+    assert_eq!(upstream(&env.tree_path(&repo, "feature")), None);
+}
+
+#[test]
+fn new_track_checks_out_the_remote_branch() {
+    let env = Env::new();
+    let repo = clone_default(&env);
+
+    let out = env
+        .cmd(&["new", &repo, "feature", "--track", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let value = json_of(&out);
+    assert_eq!(value["branch_source"], "remote");
+    assert!(value.get("ignored_remote_branch").is_none());
+    assert_eq!(
+        upstream(&env.tree_path(&repo, "feature")).as_deref(),
+        Some("origin/feature")
+    );
+}
+
+#[test]
+fn new_track_without_a_remote_branch_is_not_found() {
+    let env = Env::new();
+    let repo = clone_default(&env);
+
+    let out = env
+        .cmd(&["new", &repo, "nothing-here", "--track", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_of(&out)["error"]["code"], "not_found");
+    assert!(!env.tree_path(&repo, "nothing-here").exists());
 }
 
 #[test]
@@ -45,15 +97,16 @@ fn new_creates_branch_from_default_when_neither_exists() {
     let env = Env::new();
     let repo = clone_default(&env);
 
-    env.cmd(&["new", &repo, "brand-new"]).assert().success();
-    assert!(env.tree_path(&repo, "brand-new").exists());
-
-    let branch = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(env.tree_path(&repo, "brand-new"))
+    let out = env
+        .cmd(&["new", &repo, "brand-new", "--json"])
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8_lossy(&branch.stdout).trim(), "brand-new");
+    assert!(out.status.success());
+    let value = json_of(&out);
+    assert_eq!(value["branch_source"], "new");
+    assert!(value.get("ignored_remote_branch").is_none());
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("--track"));
+    assert_eq!(upstream(&env.tree_path(&repo, "brand-new")), None);
 }
 
 #[test]

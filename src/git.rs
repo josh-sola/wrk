@@ -133,7 +133,15 @@ pub fn worktree_add_new(
 ) -> Result<(), WrkError> {
     let tree_path = tree_path.to_string_lossy().into_owned();
     run_ok(
-        &["worktree", "add", "-b", branch, &tree_path, base],
+        &[
+            "worktree",
+            "add",
+            "--no-track",
+            "-b",
+            branch,
+            &tree_path,
+            base,
+        ],
         Some(repo_path),
     )?;
     Ok(())
@@ -159,4 +167,17 @@ pub fn status_porcelain(tree_path: &Path) -> Result<String, WrkError> {
 
 pub fn current_branch(tree_path: &Path) -> Result<String, WrkError> {
     run_ok(&["rev-parse", "--abbrev-ref", "HEAD"], Some(tree_path))
+}
+
+/// For example `3 months ago by Ada Lovelace`.
+pub fn remote_branch_summary(repo_path: &Path, branch: &str) -> Result<String, WrkError> {
+    run_ok(
+        &[
+            "log",
+            "-1",
+            "--format=%cr by %an",
+            &format!("refs/remotes/origin/{branch}"),
+        ],
+        Some(repo_path),
+    )
 }

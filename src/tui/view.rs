@@ -4,11 +4,11 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Padding, Paragraph};
 
-use super::TreeRow;
 use super::state::{App, Screen};
 use super::style::{
     Palette, cell_spans, fit_hint, harness_bar_line, split_repo_tree_indices, status_view,
 };
+use super::{Sizing, TreeRow};
 
 /// Below this row-content width, the status column drops its word and
 /// keeps only the colored glyph.
@@ -32,8 +32,11 @@ fn panel_area(area: Rect) -> Rect {
     }
 }
 
-pub fn render(frame: &mut Frame, app: &App, palette: &Palette) {
-    let area = panel_area(frame.area());
+pub fn render(frame: &mut Frame, app: &App, palette: &Palette, sizing: Sizing) {
+    let area = match sizing {
+        Sizing::Centered => panel_area(frame.area()),
+        Sizing::Fill => frame.area(),
+    };
     if area.width < 24 || area.height < 6 {
         render_centered(frame, area, "window too small", Style::default());
         return;
@@ -372,7 +375,9 @@ mod tests {
     fn render_lines(app: &App, palette: &Palette, width: u16, height: u16) -> Vec<String> {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, app, palette)).unwrap();
+        terminal
+            .draw(|frame| render(frame, app, palette, Sizing::Centered))
+            .unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..height)
             .map(|y| {
@@ -391,7 +396,9 @@ mod tests {
     fn assert_no_background(app: &App, palette: &Palette, width: u16, height: u16) {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, app, palette)).unwrap();
+        terminal
+            .draw(|frame| render(frame, app, palette, Sizing::Centered))
+            .unwrap();
         for cell in terminal.backend().buffer().content() {
             assert_eq!(cell.bg, Color::Reset, "found a painted background cell");
         }
@@ -440,6 +447,21 @@ mod tests {
         let right = lines[top].chars().position(|c| c == '╮').unwrap();
         assert_eq!(right - left + 1, usize::from(MAX_PANEL_WIDTH));
         assert_eq!(left, (120 - usize::from(MAX_PANEL_WIDTH)) / 2);
+    }
+
+    #[test]
+    fn fill_layout_uses_every_cell_on_a_large_screen() {
+        let app = App::new(sample_input());
+        let palette = Palette::new(false);
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, &app, &palette, Sizing::Fill))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(buffer.cell((0, 0)).unwrap().symbol(), "╭");
+        assert_eq!(buffer.cell((119, 39)).unwrap().symbol(), "╯");
     }
 
     #[test]
