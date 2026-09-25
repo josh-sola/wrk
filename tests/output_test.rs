@@ -54,6 +54,32 @@ fn ls_human_table_has_headers_and_rows() {
 }
 
 #[test]
+fn ls_human_lists_repos_that_have_no_trees() {
+    let env = Env::new();
+    clone_named(&env, "alpha");
+    let repo = clone_named(&env, "beta");
+    env.cmd(&["new", &repo, "t1", "--wait"]).assert().success();
+
+    let output = env
+        .cmd(&["ls"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).unwrap();
+    let alpha = text.lines().find(|l| l.starts_with("alpha")).unwrap();
+    assert_eq!(
+        alpha.split_whitespace().collect::<Vec<_>>(),
+        ["alpha", "-", "-", "-"]
+    );
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("beta") && l.contains("t1"))
+    );
+}
+
+#[test]
 fn ls_can_be_scoped_to_one_repo_by_prefix() {
     let env = Env::new();
     clone_named(&env, "alpha");

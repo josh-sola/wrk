@@ -86,14 +86,21 @@ fn print_human(listing: &Listing) {
         .repos
         .iter()
         .flat_map(|repo| {
-            repo.trees.iter().map(move |tree| {
-                (
-                    repo.name.clone(),
-                    tree.name.clone(),
-                    tree.branch.clone(),
-                    tree.status.to_string(),
-                )
-            })
+            if repo.trees.is_empty() {
+                let dash = || "-".to_string();
+                return vec![(repo.name.clone(), dash(), dash(), dash())];
+            }
+            repo.trees
+                .iter()
+                .map(|tree| {
+                    (
+                        repo.name.clone(),
+                        tree.name.clone(),
+                        tree.branch.clone(),
+                        tree.status.to_string(),
+                    )
+                })
+                .collect()
         })
         .collect();
 
@@ -121,7 +128,7 @@ fn print_human(listing: &Listing) {
     }
 
     let print_row = |a: &str, b: &str, c: &str, d: &str| {
-        println!(
+        let line = format!(
             "{:w0$}  {:w1$}  {:w2$}  {:w3$}",
             a,
             b,
@@ -132,6 +139,7 @@ fn print_human(listing: &Listing) {
             w2 = widths[2],
             w3 = widths[3]
         );
+        println!("{}", line.trim_end());
     };
     print_row(&header.0, &header.1, &header.2, &header.3);
     for row in &rows {
