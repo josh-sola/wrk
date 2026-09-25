@@ -14,7 +14,7 @@ You need these on your machine:
 
 - **GitHub SSH access** to `Sola-Solutions`. Check with `ssh -T git@github.com`.
 - **The monorepo toolchain**: `pnpm`, `uv`, and the AWS CLI (`aws`). You already have these if you work in `monorepo` today.
-- **An AWS SSO profile for dev with read access.** The hook assumes it is called `admin-dev-readonly`. Check with `aws configure list-profiles`. If yours has another name, change it in step 3.
+- **An AWS SSO profile for dev with write access.** The read-only role can't decrypt the secrets that `pnpm generate:env` reads. The hook assumes the profile is called `admin-dev`. Check with `aws configure list-profiles`. If yours has another name, change it in step 3.
 
 ## 1. Install wrk
 
@@ -53,7 +53,7 @@ These are copies, so you can edit them freely. To pick up later changes from thi
 
 Read `hooks/monorepo/on_create`. Change these if they don't match your setup:
 
-- **AWS profile.** The last lines log in to `admin-dev-readonly` if needed, then run `pnpm generate:env`. Change `AWS_PROFILE` if your dev profile has another name.
+- **AWS profile.** The last lines log in to `admin-dev` if needed, then run `pnpm generate:env`. Change `AWS_PROFILE` if your dev profile has another name.
 - **Turbo remote cache.** `TURBO_TEAM` and `TURBO_CACHE` read CI's cache so builds start warm. That needs `turbo login` once. Without it, turbo warns and builds from scratch.
 
 `hooks/lib.sh` holds the shared helpers. Its `link_plans` gives every tree of a repo a shared `plans/` folder that survives `wrk rm`, and hides it from git. Remove the `link_plans` line from a hook if you don't want that.

@@ -21,6 +21,6 @@ step pnpm build:packages
 # Last, because it needs a live AWS dev session: if the login below is not
 # finished, only this step fails and everything above is already in place.
 # The login opens a browser and waits for you to approve it there.
-export AWS_PROFILE=admin-dev-readonly
+export AWS_PROFILE=admin-dev
 aws sts get-caller-identity >/dev/null 2>&1 || step aws sso login
 step pnpm generate:env
