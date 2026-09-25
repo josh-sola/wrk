@@ -14,8 +14,26 @@ use super::style::{
 /// keeps only the colored glyph.
 const MIN_CONTENT_WIDTH_FOR_STATUS_WORDS: usize = 44;
 
+const MAX_PANEL_WIDTH: u16 = 80;
+const MAX_PANEL_HEIGHT: u16 = 22;
+
+/// Small panes, such as popups, keep every cell; larger screens get a margin
+/// and a centered panel capped at a readable size.
+fn panel_area(area: Rect) -> Rect {
+    let margin_x = if area.width >= 60 { 2 } else { 0 };
+    let margin_y = if area.height >= 16 { 1 } else { 0 };
+    let width = (area.width - 2 * margin_x).min(MAX_PANEL_WIDTH);
+    let height = (area.height - 2 * margin_y).min(MAX_PANEL_HEIGHT);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
+}
+
 pub fn render(frame: &mut Frame, app: &App, palette: &Palette) {
-    let area = frame.area();
+    let area = panel_area(frame.area());
     if area.width < 24 || area.height < 6 {
         render_centered(frame, area, "window too small", Style::default());
         return;
@@ -392,18 +410,46 @@ mod tests {
         let lines = render_lines(&app, &palette, 80, 20);
         let all = lines.join("\n");
 
-        assert!(lines[0].starts_with("╭─ wrk go "));
-        assert!(lines[0].contains("pick tree"));
-        assert!(lines[0].ends_with('╮'));
+        assert!(lines[0].trim().is_empty());
+        assert!(lines[1].starts_with("  ╭─ wrk go "));
+        assert!(lines[1].contains("pick tree"));
+        assert!(lines[1].ends_with("╮  "));
         assert!(all.contains("+ new tree \"feat\""));
         assert!(all.contains("3/3") || all.contains("feat"));
         assert!(all.contains("✓ ready"));
         assert!(all.contains("● provisioning"));
         assert!(all.contains("✗ failed"));
         assert!(all.contains("[claude]"));
-        assert!(lines[lines.len() - 1].starts_with('╰'));
-        assert!(lines[lines.len() - 1].ends_with('╯'));
+        assert!(lines[lines.len() - 2].starts_with("  ╰"));
+        assert!(lines[lines.len() - 2].ends_with("╯  "));
         assert_no_background(&app, &palette, 80, 20);
+    }
+
+    #[test]
+    fn large_screen_centers_a_capped_panel() {
+        let app = App::new(sample_input());
+        let palette = Palette::new(false);
+        let lines = render_lines(&app, &palette, 120, 40);
+
+        let top = lines.iter().position(|l| l.contains('╭')).unwrap();
+        let bottom = lines.iter().position(|l| l.contains('╰')).unwrap();
+        assert_eq!(bottom - top + 1, usize::from(MAX_PANEL_HEIGHT));
+        assert_eq!(top, (40 - usize::from(MAX_PANEL_HEIGHT)) / 2);
+
+        let left = lines[top].chars().position(|c| c == '╭').unwrap();
+        let right = lines[top].chars().position(|c| c == '╮').unwrap();
+        assert_eq!(right - left + 1, usize::from(MAX_PANEL_WIDTH));
+        assert_eq!(left, (120 - usize::from(MAX_PANEL_WIDTH)) / 2);
+    }
+
+    #[test]
+    fn small_pane_uses_every_cell() {
+        let app = App::new(sample_input());
+        let palette = Palette::new(false);
+        let lines = render_lines(&app, &palette, 40, 10);
+
+        assert!(lines[0].starts_with('╭'));
+        assert!(lines[9].ends_with('╯'));
     }
 
     #[test]
