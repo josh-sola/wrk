@@ -10,6 +10,8 @@ cargo install --path .
 
 To set up the Sola `monorepo` and `helm` repos with ready-made hooks, follow `onboarding/README.md`.
 
+`skills/wrk/SKILL.md` is an agent skill that teaches an agent to use `wrk`. Copy the `skills/wrk` folder into your agent's skills folder, such as `~/.claude/skills/`.
+
 ## Layout
 
 Everything lives under `$WRK_ROOT`, which defaults to `~/Library/wrk`:

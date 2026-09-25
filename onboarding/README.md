@@ -81,6 +81,18 @@ Then remove the test tree:
 wrk rm monorepo onboarding-test
 ```
 
+## 6. Install the wrk skill
+
+`skills/wrk/SKILL.md` teaches an agent to use `wrk`: create trees, wait for hooks, and clean up. Copy it into each agent's skills folder:
+
+```sh
+mkdir -p ~/.claude/skills && cp -R skills/wrk ~/.claude/skills/
+```
+
+Codex and Pi read the same format. Copy the folder into their skills folders too if you use them.
+
+Check: a new Claude session lists `wrk` among its skills.
+
 ## Daily use
 
 ```sh
