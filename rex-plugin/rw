@@ -233,15 +233,20 @@ def new_session(arg, repo, agent, client=None, parent=None, tree=None, model=Non
     cmd = agent_cmd(agent, model)
 
     path = tree_path(repo, tree)
-    if not path:
+    created = not path
+    if created:
         path = json.loads(run(["wrk", "new", repo, tree, "--json"]).stdout)["path"]
         if branch != tree:
             use_branch(path, tree, branch)
 
-    script = 'wrk wait "$1" "$2" && shift 2 && exec "$@"'
-    out = run(["rex", "new", label, "-c", path, "--keep-open", "--json",
-               "--", "sh", "-c", script, "sh", repo, tree] + cmd).stdout
+    out = run(["rex", "new", label, "-c", path, "--window", agent, "--keep-open", "--json",
+               "--"] + cmd).stdout
     sid = json.loads(out)["session_id"]
+    if created:
+        script = ('wrk logs -f "$1" "$2"; wrk wait "$1" "$2" >/dev/null 2>&1 && exit 0; '
+                  'echo; echo "setup failed: wrk logs $1 $2"; exec "${SHELL:-/bin/zsh}"')
+        run(["rex", "window", "new", "-s", sid, "setup", "--focus=false", "-c", path,
+             "--", "sh", "-c", script, "sh", repo, tree])
 
     entries = [e for e in load() if e["label"] != label]
     entries.append({"label": label, "session_id": sid, "repo": repo, "tree": tree, "path": path,

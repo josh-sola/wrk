@@ -103,6 +103,8 @@ rex-plugin/install.sh
 
 `install.sh` copies `rw` and `rw.lua` rather than linking them, because trees get deleted. It builds `rw-launch` with `cargo install`, then reloads Rex config.
 
+A new tree's session opens on the agent tab, and the agent starts at once. A second `setup` tab follows the `on_create` log. It closes when the hook succeeds, and stays open as a shell if the hook fails.
+
 Each Rex key is `alt+space` followed by one letter: `a` adds an agent or shell block to the session, `e` opens helix in its tree, and `w` closes the session and removes its tree. Pass `keys` to `setup` in `init.lua` to change them.
 
 `alt+space` then `n` opens the composer. Type a ticket ID, a title, or a plain name. The first row always creates a tree with exactly the name you typed. Pick a ticket row to use Linear's branch name instead.
