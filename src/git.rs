@@ -165,8 +165,31 @@ pub fn status_porcelain(tree_path: &Path) -> Result<String, WrkError> {
     run_ok(&["status", "--porcelain"], Some(tree_path))
 }
 
+/// Reads `HEAD` from the files, because `wrk ls` asks for every tree and a
+/// git process per tree is slow. Anything unexpected falls back to git.
 pub fn current_branch(tree_path: &Path) -> Result<String, WrkError> {
-    run_ok(&["rev-parse", "--abbrev-ref", "HEAD"], Some(tree_path))
+    match read_head_branch(tree_path) {
+        Some(branch) => Ok(branch),
+        None => run_ok(&["rev-parse", "--abbrev-ref", "HEAD"], Some(tree_path)),
+    }
+}
+
+fn read_head_branch(tree_path: &Path) -> Option<String> {
+    let dot_git = tree_path.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let target = text.trim().strip_prefix("gitdir:")?.trim();
+        tree_path.join(target)
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    if let Some(name) = head.strip_prefix("ref: refs/heads/") {
+        return (!name.is_empty()).then(|| name.to_string());
+    }
+    let is_sha = matches!(head.len(), 40 | 64) && head.chars().all(|c| c.is_ascii_hexdigit());
+    is_sha.then(|| "HEAD".to_string())
 }
 
 /// For example `3 months ago by Ada Lovelace`.
