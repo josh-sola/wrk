@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""rw: manage wrk worktrees as Rex sessions."""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+STATE = os.path.expanduser("~/.local/state/rw/sessions.json")
+AGENTS = ["claude", "codex", "devin", "shell"]
+TICKET = re.compile(r"^[A-Za-z]+-\d+$")
+KEY_HELP = 'security add-generic-password -s linear-api-key -a "$USER" -w'
+
+
+class Fail(Exception):
+    pass
+
+
+def run(cmd, check=True, **kw):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    except FileNotFoundError:
+        raise Fail(f"{cmd[0]}: command not found on PATH")
+    if check and p.returncode != 0:
+        msg = (p.stderr or p.stdout).strip() or f"exit {p.returncode}"
+        raise Fail(f"{' '.join(cmd[:3])} failed: {msg}")
+    return p
+
+
+def load():
+    try:
+        with open(STATE) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+
+
+def save(entries):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(entries, f, indent=2)
+    os.replace(tmp, STATE)
+
+
+def live_sessions():
+    out = run(["rex", "ls", "--json"]).stdout
+    return {s["session_id"]: s["label"] for s in json.loads(out)["sessions"]}
+
+
+def is_live(entry, live):
+    return entry["session_id"] in live or entry["label"] in live.values()
+
+
+def session_id_of(entry, live):
+    if entry["session_id"] in live:
+        return entry["session_id"]
+    for sid, label in live.items():
+        if label == entry["label"]:
+            return sid
+    return None
+
+
+def current_session(args):
+    return args.session or os.environ.get("REX_SESSION")
+
+
+def current_entry(args, entries, live):
+    sid = current_session(args)
+    if not sid:
+        return None
+    for e in entries:
+        if e["session_id"] == sid:
+            return e
+    label = live.get(sid)
+    for e in entries:
+        if e["label"] == label:
+            return e
+    return None
+
+
+def need_current(args):
+    entry = current_entry(args, load(), live_sessions())
+    if not entry:
+        raise Fail("this session is not managed by rw (no matching entry in state)")
+    return entry
+
+
+def linear(query):
+    p = subprocess.run(["security", "find-generic-password", "-s", "linear-api-key", "-w"],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        raise Fail(f"no Linear API key in Keychain. Add it with: {KEY_HELP}")
+    req = urllib.request.Request(
+        "https://api.linear.app/graphql",
+        data=json.dumps({"query": query}).encode(),
+        headers={"Authorization": p.stdout.strip(), "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            body = json.load(r)
+    except Exception as e:
+        raise Fail(f"Linear request failed: {e}")
+    if body.get("errors"):
+        raise Fail(f"Linear error: {body['errors'][0].get('message')}")
+    return body["data"]
+
+
+ISSUE_FIELDS = "identifier title branchName"
+
+
+def fetch_issue(ident):
+    issue = linear('{ issue(id: "%s") { %s } }' % (ident, ISSUE_FIELDS))["issue"]
+    if not issue:
+        raise Fail(f"Linear has no issue {ident}")
+    return issue
+
+
+def fetch_children(ident):
+    q = '{ issue(id: "%s") { children { nodes { %s } } } }' % (ident, ISSUE_FIELDS)
+    issue = linear(q)["issue"]
+    if not issue:
+        raise Fail(f"Linear has no issue {ident}")
+    return issue["children"]["nodes"]
+
+
+def assigned_issues():
+    q = ('{ viewer { assignedIssues(first: 50, filter: {state: {type: {nin: ["completed", "canceled"]}}}) '
+         '{ nodes { identifier title branchName } } } }')
+    return linear(q)["viewer"]["assignedIssues"]["nodes"]
+
+
+def short(title):
+    return title[:40].rstrip()
+
+
+def fzf(lines, prompt, query=False):
+    cmd = ["fzf", "--prompt", prompt, "--height", "100%", "--reverse"]
+    if query:
+        cmd.append("--print-query")
+    try:
+        p = subprocess.run(cmd, input="\n".join(lines), stdout=subprocess.PIPE, text=True)
+    except FileNotFoundError:
+        raise Fail("fzf: command not found on PATH")
+    if p.returncode not in (0, 1):
+        raise Fail("cancelled")
+    return p.stdout.splitlines()
+
+
+def pick(lines, prompt):
+    out = fzf(lines, prompt)
+    return out[0] if out else lines[0]
+
+
+def focus(session_id, client):
+    if not client:
+        return
+    run(["rex", "-C", client, "do", "session.select", f"session_id={session_id}"], check=False)
+
+
+def tree_path(repo, tree):
+    p = run(["wrk", "path", repo, tree], check=False)
+    path = p.stdout.strip()
+    # wrk resolves a unique prefix, so "foo" can find "foo-bar".
+    if p.returncode != 0 or os.path.basename(path) != tree:
+        return None
+    return path
+
+
+MODEL_FLAG = {"claude": "--model", "codex": "-m"}
+
+
+def agent_cmd(agent, model=None):
+    if agent == "shell":
+        return [os.environ.get("SHELL", "/bin/zsh")]
+    if not shutil.which(agent):
+        raise Fail(f"{agent} is not on PATH")
+    if model and agent in MODEL_FLAG:
+        return [agent, MODEL_FLAG[agent], model]
+    return [agent]
+
+
+def resolve(arg, parent, tree=None):
+    """Return (tree, branch, label, ticket) for a ticket id or plain name.
+
+    `tree` overrides the tree name; a ticket's branch stays Linear's branchName.
+    """
+    if tree and "/" in tree:
+        raise Fail("tree names cannot contain '/'")
+    if not TICKET.match(arg):
+        if "/" in arg:
+            raise Fail("tree names cannot contain '/'")
+        return tree or arg, tree or arg, arg, None
+    issue = fetch_issue(arg.upper())
+    branch = issue["branchName"]
+    tree = tree or branch.split("/", 1)[-1]
+    label = f"{issue['identifier']} {short(issue['title'])}"
+    if parent:
+        label = f"{parent.upper()} › {label}"
+    return tree, branch, label, issue["identifier"]
+
+
+def use_branch(path, tree, branch):
+    """Put the fresh tree on `branch`, reusing it locally or from origin if it already exists."""
+    git = ["git", "-C", path]
+    has = lambda ref: run(git + ["rev-parse", "--verify", "--quiet", ref], check=False).returncode == 0
+    if has(f"refs/heads/{branch}"):
+        r = run(git + ["checkout", branch], check=False)
+    elif has(f"refs/remotes/origin/{branch}"):
+        r = run(git + ["checkout", "-b", branch, "--track", f"origin/{branch}"], check=False)
+    else:
+        r = run(git + ["branch", "-m", branch], check=False)
+        tree = None
+    if r.returncode != 0:
+        print(f"rw: could not switch to {branch}: {r.stderr.strip()}", file=sys.stderr)
+    elif tree:
+        run(git + ["branch", "-D", tree], check=False)
+
+
+def new_session(arg, repo, agent, client=None, parent=None, tree=None, model=None, log=sys.stdout):
+    """Open a session and return {session_id, label, repo, tree, path}."""
+    tree, branch, label, ticket = resolve(arg, parent, tree)
+    live = live_sessions()
+    for sid, existing in live.items():
+        if existing == label:
+            focus(sid, client)
+            print(f"already open: {label}", file=log)
+            return {"session_id": sid, "label": label, "repo": repo, "tree": tree,
+                    "path": tree_path(repo, tree)}
+    cmd = agent_cmd(agent, model)
+
+    path = tree_path(repo, tree)
+    if not path:
+        path = json.loads(run(["wrk", "new", repo, tree, "--json"]).stdout)["path"]
+        if branch != tree:
+            use_branch(path, tree, branch)
+
+    script = 'wrk wait "$1" "$2" && shift 2 && exec "$@"'
+    out = run(["rex", "new", label, "-c", path, "--keep-open", "--json",
+               "--", "sh", "-c", script, "sh", repo, tree] + cmd).stdout
+    sid = json.loads(out)["session_id"]
+
+    entries = [e for e in load() if e["label"] != label]
+    entries.append({"label": label, "session_id": sid, "repo": repo, "tree": tree, "path": path,
+                    "ticket": ticket, "parent": parent.upper() if parent else None, "agent": agent})
+    save(entries)
+    focus(sid, client)
+    print(f"opened: {label} ({repo}/{tree})", file=log)
+    return {"session_id": sid, "label": label, "repo": repo, "tree": tree, "path": path}
+
+
+def cmd_new(args):
+    log = sys.stderr if args.json else sys.stdout
+    result = new_session(args.name, args.repo or "monorepo", args.agent or "claude", args.client,
+                         args.parent, args.branch, args.model, log)
+    if args.json:
+        print(json.dumps(result))
+
+
+def cmd_tickets(args):
+    issues = [{"identifier": i["identifier"], "title": i["title"], "branch_name": i["branchName"]}
+              for i in assigned_issues()]
+    if args.json:
+        print(json.dumps(issues))
+    else:
+        for i in issues:
+            print(f"{i['identifier']}  {i['title']}")
+
+
+def cmd_add(args):
+    entry = need_current(args)
+    agent = args.agent
+    if not agent:
+        agent = pick(AGENTS, "agent> ") if sys.stdin.isatty() else "claude"
+    split_in_tree(args, entry, [agent_cmd(agent)])
+
+
+def cmd_edit(args):
+    entry = need_current(args)
+    if not shutil.which("hx"):
+        raise Fail("hx is not on PATH (brew install helix)")
+    split_in_tree(args, entry, ["hx"] + ([args.file] if args.file else []))
+
+
+def split_in_tree(args, entry, command):
+    cmd = ["rex", "split", "-s", current_session(args), "-c", entry["path"], "--keep-open"]
+    if args.block:
+        cmd += ["-b", args.block]
+    run(cmd + ["--"] + command)
+
+
+def cmd_children(args):
+    entries, live = load(), live_sessions()
+    cur = current_entry(args, entries, live)
+    repo = args.repo or (cur["repo"] if cur else "monorepo")
+    agent = args.agent or (cur["agent"] if cur else "claude")
+    parent = args.parent
+    if not parent:
+        if not cur or not cur["ticket"]:
+            raise Fail("no parent given and the current session has no ticket")
+        parent = cur["ticket"]
+    parent = parent.upper()
+    kids = fetch_children(parent)
+    if not kids:
+        print(f"{parent} has no children")
+        return
+    prev = None
+    for e in entries:
+        if e["ticket"] == parent and is_live(e, live):
+            prev = session_id_of(e, live)
+    for kid in kids:
+        sid = new_session(kid["identifier"], repo, agent, args.client, parent)["session_id"]
+        if prev:
+            run(["rex", "session", "move", sid, "--after", prev], check=False)
+        prev = sid
+
+
+def find_entry(arg, entries):
+    for key in ("label", "ticket", "tree"):
+        hits = [e for e in entries if e[key] and e[key].lower() == arg.lower()]
+        if len(hits) == 1:
+            return hits[0]
+    hits = [e for e in entries if e["label"].lower().startswith(arg.lower())]
+    if len(hits) == 1:
+        return hits[0]
+    raise Fail(f"no unique rw session matches '{arg}'")
+
+
+def remove_tree(entry, force):
+    if not tree_path(entry["repo"], entry["tree"]):
+        return
+    cmd = ["wrk", "rm", entry["repo"], entry["tree"]] + (["--force"] if force else [])
+    run(cmd)
+
+
+def cmd_close(args):
+    os.chdir(os.path.expanduser("~"))
+    entries, live = load(), live_sessions()
+    entry = find_entry(args.label, entries) if args.label else current_entry(args, entries, live)
+    if not entry:
+        raise Fail("no session to close (pass a label, or run inside an rw session)")
+    kids = [e for e in entries if e["ticket"] and e["parent"] == entry["ticket"]]
+    if kids and not args.with_children:
+        names = ", ".join(k["label"] for k in kids)
+        raise Fail(f"{entry['label']} has open children: {names}. Use --with-children to close them too")
+    targets = kids + [entry]
+    if args.confirm:
+        print("Close and remove:")
+        for t in targets:
+            print(f"  {t['label']}  ({t['repo']}/{t['tree']})")
+        if input("Proceed? [y/N] ").strip().lower() != "y":
+            print("cancelled")
+            return
+    done, error = [], None
+    for t in targets:
+        try:
+            remove_tree(t, args.force)
+        except Fail as e:
+            error = e
+            break
+        done.append(t)
+    gone = {t["label"] for t in done}
+    save([e for e in entries if e["label"] not in gone])
+    own = current_session(args)
+    sids = [session_id_of(t, live) for t in done]
+    sids = [s for s in sids if s]
+    for sid in [s for s in sids if s != own] + [s for s in sids if s == own]:
+        run(["rex", "kill", sid], check=False)
+    if error:
+        raise error
+    print("closed: " + ", ".join(t["label"] for t in done))
+
+
+def cmd_ls(args):
+    entries, live = load(), live_sessions()
+    for e in entries:
+        state = "live" if is_live(e, live) else "gone"
+        print(f"{state:5} {e['label']}  [{e['repo']}/{e['tree']}, {e['agent']}]")
+
+
+def cmd_prune(args):
+    entries, live = load(), live_sessions()
+    stale = [e for e in entries if not is_live(e, live)]
+    if not stale:
+        print("nothing to prune")
+        return
+    for e in stale:
+        print(f"{e['label']}  ({e['repo']}/{e['tree']})")
+    if not args.yes:
+        print("Run `rw prune --yes` to remove these trees.")
+        return
+    removed = set()
+    for e in stale:
+        try:
+            remove_tree(e, False)
+            removed.add(e["label"])
+        except Fail as err:
+            print(f"rw: kept {e['label']}: {err}", file=sys.stderr)
+    save([e for e in entries if e["label"] not in removed])
+    print(f"removed {len(removed)} of {len(stale)}")
+
+
+def main():
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--session", help="Rex session id (default: $REX_SESSION)")
+    common.add_argument("--client", help="Rex client to focus new sessions for")
+    common.add_argument("--block", help="Rex block to split from")
+    repo_agent = argparse.ArgumentParser(add_help=False)
+    repo_agent.add_argument("--repo", help="wrk repo (default: monorepo)")
+    repo_agent.add_argument("--agent", choices=AGENTS, help="claude, codex, devin or shell (default: claude)")
+
+    ap = argparse.ArgumentParser(prog="rw", description="Manage wrk worktrees as Rex sessions.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("new", parents=[common, repo_agent], help="open a session for a ticket or name")
+    p.add_argument("name", metavar="NAME|TICKET", help="ticket like ML-616, or a plain name")
+    p.add_argument("--parent", help="parent ticket (adds it to the label)")
+    p.add_argument("--branch", help="tree name (a ticket still uses Linear's branch name)")
+    p.add_argument("--model", help="model for claude or codex")
+    p.add_argument("--json", action="store_true", help="print one JSON document; progress goes to stderr")
+    p.set_defaults(fn=cmd_new)
+
+    p = sub.add_parser("tickets", help="list your open Linear issues")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_tickets)
+
+    p = sub.add_parser("add", parents=[common], help="add a block to the current session")
+    p.add_argument("agent", nargs="?", choices=AGENTS)
+    p.set_defaults(fn=cmd_add)
+
+    p = sub.add_parser("edit", parents=[common], help="open hx in the current session's tree")
+    p.add_argument("file", nargs="?")
+    p.set_defaults(fn=cmd_edit)
+
+    p = sub.add_parser("children", parents=[common, repo_agent], help="open a session per sub-ticket")
+    p.add_argument("parent", nargs="?", help="parent ticket (default: current session's ticket)")
+    p.set_defaults(fn=cmd_children)
+
+    p = sub.add_parser("close", parents=[common], help="remove the tree and close the session")
+    p.add_argument("label", nargs="?")
+    p.add_argument("--force", action="store_true")
+    p.add_argument("--with-children", action="store_true")
+    p.add_argument("--confirm", action="store_true", help="ask y/N first")
+    p.set_defaults(fn=cmd_close)
+
+    p = sub.add_parser("ls", parents=[common], help="list rw sessions")
+    p.set_defaults(fn=cmd_ls)
+
+    p = sub.add_parser("prune", parents=[common], help="remove trees whose session is gone")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_prune)
+
+    args = ap.parse_args()
+    try:
+        args.fn(args)
+    except Fail as e:
+        print(f"rw: {e}", file=sys.stderr)
+        sys.exit(1)
+    except (KeyboardInterrupt, EOFError):
+        sys.exit(130)
+
+
+if __name__ == "__main__":
+    main()

@@ -92,3 +92,26 @@ command = "dev.wrk.pick"
 ```
 
 See `herdr-plugin/open.sh` for the placement logic and `herdr-plugin/test.sh` for its offline tests.
+
+## Rex
+
+`rex-plugin/` adds a new-session composer to Rex. It holds `rw`, a script that opens a worktree as a Rex session, `rw.lua`, which binds its Rex actions, and `rw-launch`, the composer popup. Install all three with:
+
+```sh
+rex-plugin/install.sh
+```
+
+`install.sh` copies `rw` and `rw.lua` rather than linking them, because trees get deleted. It builds `rw-launch` with `cargo install`, then reloads Rex config.
+
+Each Rex key is `alt+space` followed by one letter: `a` adds an agent or shell block to the session, `e` opens helix in its tree, and `w` closes the session and removes its tree. Pass `keys` to `setup` in `init.lua` to change them.
+
+`alt+space` then `n` opens the composer. Type a ticket ID, a title, or a plain name. The first row always creates a tree with exactly the name you typed. Pick a ticket row to use Linear's branch name instead.
+
+- `enter` starts the session.
+- `↑` `↓` pick a ticket row.
+- `^P` picks the repo and `^O` picks the agent (claude, codex or devin). Each opens a dropdown under its chip. In the repo dropdown, type to filter. The repo list comes from `wrk ls`, with `monorepo` first.
+- `^B` edits the branch line, which is also the tree name. Once you edit it, it stops following the selection.
+- You can also use the mouse: click a chip to open its dropdown, click an item to pick it, click a row to select it and click it again to start it, and click the branch line to edit it. The wheel scrolls.
+- `esc` closes a menu, ends a branch edit, or closes the composer.
+
+The composer remembers your last repo and agent, and caches your tickets so it draws at once. It hands each launch to `rw new`.
