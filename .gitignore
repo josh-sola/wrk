@@ -7,3 +7,4 @@ local/
 # already existing elements were commented out
 
 #/target
+/rex-plugin/launch/target

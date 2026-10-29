@@ -1,6 +1,6 @@
-mod filter;
+pub mod filter;
 mod state;
-mod style;
+pub mod style;
 mod view;
 
 use std::fs::{File, OpenOptions};

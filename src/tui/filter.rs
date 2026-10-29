@@ -2,15 +2,15 @@ use crossterm::event::{KeyEvent, KeyModifiers};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Matcher, Utf32Str};
 
-pub(super) fn is_ctrl(key: KeyEvent) -> bool {
+pub fn is_ctrl(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
-pub(super) fn clamp_selected(current: usize, len: usize) -> usize {
+pub fn clamp_selected(current: usize, len: usize) -> usize {
     if len == 0 { 0 } else { current.min(len - 1) }
 }
 
-pub(super) fn validate_tree_name(name: &str) -> Result<(), String> {
+pub fn validate_tree_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("tree name is required".to_string());
     }
@@ -24,7 +24,7 @@ pub(super) fn validate_tree_name(name: &str) -> Result<(), String> {
 }
 
 /// `^W` semantics: trailing whitespace goes first, then the word before it.
-pub(super) fn delete_word(s: &mut String) {
+pub fn delete_word(s: &mut String) {
     let trimmed = s.trim_end();
     let cut = trimmed
         .rfind(char::is_whitespace)
@@ -34,7 +34,7 @@ pub(super) fn delete_word(s: &mut String) {
 }
 
 /// An empty query keeps every item in its original order.
-pub(super) fn fuzzy_filter(
+pub fn fuzzy_filter(
     matcher: &mut Matcher,
     query: &str,
     items: &[String],

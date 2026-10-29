@@ -14,6 +14,8 @@ cargo test
 
 To install your build: `cargo install --path .`
 
+For the Rex composer, run the same three commands in `rex-plugin/launch`. It is a standalone crate, not a workspace member, so the root commands don't cover it.
+
 To try the picker with fake data: `cargo run --example pick_demo`. It needs a real terminal.
 
 ## Layout
@@ -35,6 +37,7 @@ To try the picker with fake data: `cargo run --example pick_demo`. It needs a re
 - **JSON:** each command with `--json` prints exactly one document on stdout, with snake_case keys. Errors in JSON mode also go to stdout. Progress lines always go to stderr. `go` has no `--json`.
 - **Out of scope:** submodule handling, Graphite, and terminal or window-manager integrations. Hooks cover provisioning.
 - **herdr integration lives only in `herdr-plugin/`.** `wrk` itself must never call herdr.
+- **Rex integration lives only in `rex-plugin/`.** `wrk` itself must never call rex.
 
 ## Tests
 
