@@ -203,21 +203,11 @@ def resolve(arg, parent, tree=None):
     return tree, branch, label, issue["identifier"]
 
 
-def use_branch(path, tree, branch):
-    """Put the fresh tree on `branch`, reusing it locally or from origin if it already exists."""
-    git = ["git", "-C", path]
-    has = lambda ref: run(git + ["rev-parse", "--verify", "--quiet", ref], check=False).returncode == 0
-    if has(f"refs/heads/{branch}"):
-        r = run(git + ["checkout", branch], check=False)
-    elif has(f"refs/remotes/origin/{branch}"):
-        r = run(git + ["checkout", "-b", branch, "--track", f"origin/{branch}"], check=False)
-    else:
-        r = run(git + ["branch", "-m", branch], check=False)
-        tree = None
-    if r.returncode != 0:
-        print(f"rw: could not switch to {branch}: {r.stderr.strip()}", file=sys.stderr)
-    elif tree:
-        run(git + ["branch", "-D", tree], check=False)
+def remote_has_branch(repo, branch):
+    """True when `origin` has `branch`, read from the remote itself."""
+    clone = json.loads(run(["wrk", "path", repo, "--json"]).stdout)["path"]
+    return run(["git", "-C", clone, "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}"],
+               check=False).returncode == 0
 
 
 def new_session(arg, repo, agent, client=None, parent=None, tree=None, model=None, log=sys.stdout):
@@ -235,9 +225,12 @@ def new_session(arg, repo, agent, client=None, parent=None, tree=None, model=Non
     path = tree_path(repo, tree)
     created = not path
     if created:
-        path = json.loads(run(["wrk", "new", repo, tree, "--json"]).stdout)["path"]
+        wrk_new = ["wrk", "new", repo, tree, "--json"]
         if branch != tree:
-            use_branch(path, tree, branch)
+            wrk_new += ["--branch", branch]
+            if remote_has_branch(repo, branch):
+                wrk_new.append("--track")
+        path = json.loads(run(wrk_new).stdout)["path"]
 
     out = run(["rex", "new", label, "-c", path, "--keep-open", "--json",
                "--"] + cmd).stdout

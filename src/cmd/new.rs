@@ -38,13 +38,22 @@ pub struct IgnoredRemote {
 }
 
 /// Creates a tree for an already-resolved repo. `tree` is used literally,
-/// never prefix-matched. A same-named `origin` branch is only used with
-/// `track`, because common names often match someone's stale branch.
-pub fn create(paths: &Paths, repo: &str, tree: &str, track: bool) -> Result<Created, WrkError> {
+/// never prefix-matched. The branch is `branch`, or `tree` when it is `None`.
+/// A same-named `origin` branch is only used with `track`, because common
+/// names often match someone's stale branch. A local branch with no commits
+/// beyond origin's default is replaced, since it is only a stale pointer.
+pub fn create(
+    paths: &Paths,
+    repo: &str,
+    tree: &str,
+    branch: Option<&str>,
+    track: bool,
+) -> Result<Created, WrkError> {
     validate_name(Kind::Tree, tree)?;
-    if !git::check_ref_format(tree)? {
+    let branch = branch.unwrap_or(tree);
+    if !git::check_ref_format(branch)? {
         return Err(WrkError::InvalidName(format!(
-            "{tree:?} is not a valid branch name"
+            "{branch:?} is not a valid branch name"
         )));
     }
 
@@ -62,25 +71,33 @@ pub fn create(paths: &Paths, repo: &str, tree: &str, track: bool) -> Result<Crea
         git::fetch_prune(&repo_path)?;
         paths::ensure_dir(&paths.repo_trees_dir(repo))?;
 
-        let remote_exists = git::remote_branch_exists(&repo_path, tree)?;
-        if git::local_branch_exists(&repo_path, tree)? {
-            git::worktree_add(&repo_path, &tree_path, tree)?;
+        let default = git::default_branch(&repo_path)?;
+        let remote_exists = git::remote_branch_exists(&repo_path, branch)?;
+        let reuse_local = git::local_branch_exists(&repo_path, branch)? && {
+            let ahead = git::commits_ahead_of_remote(&repo_path, &default, branch)?;
+            if ahead == 0 {
+                eprintln!("new: replacing local branch {branch}, which has no commits of its own");
+                git::delete_branch(&repo_path, branch)?;
+            }
+            ahead > 0
+        };
+        if reuse_local {
+            git::worktree_add(&repo_path, &tree_path, branch)?;
             BranchSource::Local
         } else if track {
             if !remote_exists {
-                return Err(WrkError::NotFound(format!("origin/{tree} to track")));
+                return Err(WrkError::NotFound(format!("origin/{branch} to track")));
             }
-            git::worktree_add_track(&repo_path, &tree_path, tree, &format!("origin/{tree}"))?;
+            git::worktree_add_track(&repo_path, &tree_path, branch, &format!("origin/{branch}"))?;
             BranchSource::Remote
         } else {
             if remote_exists {
                 ignored_remote_branch = Some(IgnoredRemote {
-                    name: format!("origin/{tree}"),
-                    last_commit: git::remote_branch_summary(&repo_path, tree)?,
+                    name: format!("origin/{branch}"),
+                    last_commit: git::remote_branch_summary(&repo_path, branch)?,
                 });
             }
-            let default = git::default_branch(&repo_path)?;
-            git::worktree_add_new(&repo_path, &tree_path, tree, &format!("origin/{default}"))?;
+            git::worktree_add_new(&repo_path, &tree_path, branch, &format!("origin/{default}"))?;
             BranchSource::New
         }
     };
@@ -90,7 +107,7 @@ pub fn create(paths: &Paths, repo: &str, tree: &str, track: bool) -> Result<Crea
         repo: repo.to_string(),
         tree: tree.to_string(),
         path: tree_path,
-        branch: tree.to_string(),
+        branch: branch.to_string(),
         branch_source,
         ignored_remote_branch,
         hook_status: hook_status.as_str(),
@@ -101,6 +118,7 @@ pub fn run(
     paths: &Paths,
     repo_prefix: &str,
     tree: &str,
+    branch: Option<&str>,
     track: bool,
     wait_for_hook: bool,
     json: bool,
@@ -114,7 +132,7 @@ pub fn run(
     };
 
     eprintln!("new: creating {repo}/{tree}");
-    let mut created = match create(paths, &repo, tree, track) {
+    let mut created = match create(paths, &repo, tree, branch, track) {
         Ok(c) => c,
         Err(e) => {
             output::emit_error(json, &e);
