@@ -239,7 +239,7 @@ def new_session(arg, repo, agent, client=None, parent=None, tree=None, model=Non
         if branch != tree:
             use_branch(path, tree, branch)
 
-    out = run(["rex", "new", label, "-c", path, "--window", agent, "--keep-open", "--json",
+    out = run(["rex", "new", label, "-c", path, "--keep-open", "--json",
                "--"] + cmd).stdout
     sid = json.loads(out)["session_id"]
     if created:
