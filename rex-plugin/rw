@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import sys
+import termios
+import tty
 import urllib.request
 
 STATE = os.path.expanduser("~/.local/state/rw/sessions.json")
@@ -334,6 +336,22 @@ def remove_tree(entry, force):
     run(cmd)
 
 
+def ask_yes(prompt):
+    """Return True if the user presses y. One key, no Enter needed."""
+    if not sys.stdin.isatty():
+        return input(prompt).strip().lower() == "y"
+    print(prompt, end="", flush=True)
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        key = os.read(fd, 1).decode(errors="replace")
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    print(key if key.isprintable() else "")
+    return key.lower() == "y"
+
+
 def cmd_close(args):
     os.chdir(os.path.expanduser("~"))
     entries, live = load(), live_sessions()
@@ -349,7 +367,7 @@ def cmd_close(args):
         print("Close and remove:")
         for t in targets:
             print(f"  {t['label']}  ({t['repo']}/{t['tree']})")
-        if input("Proceed? [y/N] ").strip().lower() != "y":
+        if not ask_yes("Proceed? [y/N] "):
             print("cancelled")
             return
     done, error = [], None
