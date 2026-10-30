@@ -340,7 +340,7 @@ def cmd_close(args):
     entry = find_entry(args.label, entries) if args.label else current_entry(args, entries, live)
     if not entry:
         raise Fail("no session to close (pass a label, or run inside an rw session)")
-    kids = [e for e in entries if e["ticket"] and e["parent"] == entry["ticket"]]
+    kids = [e for e in entries if entry["ticket"] and e["parent"] == entry["ticket"]]
     if kids and not args.with_children:
         names = ", ".join(k["label"] for k in kids)
         raise Fail(f"{entry['label']} has open children: {names}. Use --with-children to close them too")
