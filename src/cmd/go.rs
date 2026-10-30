@@ -12,10 +12,11 @@ use crate::resolve::{self, TreeMatch};
 use crate::state::{self, HookStatus};
 use crate::tui::{self, PickInput, TreeRow};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct GoFlags {
     pub new_tree: bool,
     pub wait: bool,
+    pub branch: Option<String>,
     pub track: bool,
     pub fill: bool,
 }
@@ -167,7 +168,7 @@ fn go(
         TreeMatch::Existing(name) => name,
         TreeMatch::Create(name) => {
             eprintln!("go: creating {repo}/{name}");
-            match new::create(paths, &repo, &name, flags.track) {
+            match new::create(paths, &repo, &name, flags.branch.as_deref(), flags.track) {
                 Ok(created) => new::print_ignored_remote_hint("go", &created),
                 Err(e) => {
                     output::print_error_human(&e);

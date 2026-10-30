@@ -36,13 +36,14 @@ fn hook_presence(paths: &Paths, repo: &str, hook: &str) -> Result<Presence, WrkE
 pub(crate) fn hook_env(paths: &Paths, repo: &str, tree: &str) -> Vec<(&'static str, String)> {
     let repo_path = paths.repo(repo);
     let tree_path = paths.tree(repo, tree);
+    let branch = crate::git::current_branch(&tree_path).unwrap_or_else(|_| tree.to_string());
     vec![
         ("WRK_ROOT", paths.root().display().to_string()),
         ("WRK_REPO", repo.to_string()),
         ("WRK_TREE", tree.to_string()),
         ("WRK_TREE_PATH", tree_path.display().to_string()),
         ("WRK_REPO_PATH", repo_path.display().to_string()),
-        ("WRK_BRANCH", tree.to_string()),
+        ("WRK_BRANCH", branch),
     ]
 }
 

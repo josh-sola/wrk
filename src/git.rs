@@ -84,6 +84,26 @@ pub fn local_branch_exists(repo_path: &Path, branch: &str) -> Result<bool, WrkEr
     Ok(output.status.success())
 }
 
+/// How many commits `branch` has that `origin/<base>` does not.
+pub fn commits_ahead_of_remote(
+    repo_path: &Path,
+    base: &str,
+    branch: &str,
+) -> Result<u64, WrkError> {
+    let range = format!("refs/remotes/origin/{base}..refs/heads/{branch}");
+    let count = run_ok(&["rev-list", "--count", &range], Some(repo_path))?;
+    count
+        .parse()
+        .map_err(|_| WrkError::GitFailed(format!("unexpected rev-list output: {count:?}")))
+}
+
+/// Deletes a local branch even if it is unmerged. Git refuses one that is
+/// checked out in a worktree.
+pub fn delete_branch(repo_path: &Path, branch: &str) -> Result<(), WrkError> {
+    run_ok(&["branch", "-D", branch], Some(repo_path))?;
+    Ok(())
+}
+
 pub fn remote_branch_exists(repo_path: &Path, branch: &str) -> Result<bool, WrkError> {
     let output = run(
         &[

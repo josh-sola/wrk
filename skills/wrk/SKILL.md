@@ -13,7 +13,7 @@ Everything is under `$WRK_ROOT`, which defaults to `~/Library/wrk`:
 
 ```
 repos/<repo>/          the clone; never work here
-trees/<repo>/<tree>/   one worktree per tree, on branch <tree>
+trees/<repo>/<tree>/   one worktree per tree, on branch <tree> unless --branch says otherwise
 hooks/<repo>/          on_create and on_destroy hooks
 state/trees/<repo>/    hook status and logs
 ```
@@ -27,7 +27,7 @@ Pass `--json` to get one JSON document on stdout. Progress lines go to stderr.
 | Command | Use |
 | --- | --- |
 | `wrk ls [repo] --json` | List repos and their trees: name, path, branch, and hook status. |
-| `wrk new <repo> <tree> --json` | Create a tree on branch `<tree>`. Returns before the hook finishes. |
+| `wrk new <repo> <tree> [--branch NAME] --json` | Create a tree on branch `<tree>`, or on `NAME`. Returns before the hook finishes. |
 | `wrk new <repo> <tree> --wait --json` | Create a tree and wait for its hook. |
 | `wrk wait <repo> <tree> [--timeout SECS] --json` | Wait for a tree's hook to finish. |
 | `wrk path <repo> [tree] --json` | Print the path of a repo's clone or a tree. |
@@ -48,8 +48,8 @@ wrk new monorepo fix-login --wait --json
 cd "$(wrk path monorepo fix-login --json | jq -r .path)"
 ```
 
-- **Branches:** `new` creates branch `<tree>` from origin's default branch. If a local branch of that name exists, it reuses it. To check out an existing remote branch instead, pass `--track`. Without `--track`, `new` never checks out `origin/<tree>`, even when it exists.
-- **Names:** The tree name is also the branch name, so pick a short, specific name.
+- **Branches:** `new` creates branch `<tree>` (or `--branch NAME`) from origin's default branch. If a local branch of that name exists and has commits of its own, it reuses it. A local branch with no commits beyond origin's default is deleted and replaced. To check out an existing remote branch instead, pass `--track`. Without `--track`, `new` never checks out `origin/<branch>`, even when it exists.
+- **Names:** The tree name is the branch name unless you pass `--branch`, so pick a short, specific name. Set the branch at creation; do not run `git checkout` in a new tree while its hook runs.
 - **Setup:** Without `--wait`, the tree exists at once but dependencies may still be installing. Run `wrk wait` before you build or test.
 
 ## Hook results

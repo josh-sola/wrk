@@ -25,7 +25,7 @@ Everything lives under `$WRK_ROOT`, which defaults to `~/Library/wrk`:
 
 ```
 repos/<repo>/              clones (no checkout, detached HEAD)
-trees/<repo>/<tree>/       worktrees; branch <tree>
+trees/<repo>/<tree>/       worktrees; branch <tree> unless --branch says otherwise
 hooks/<repo>/on_create     optional executable, runs in the background after `new`
 hooks/<repo>/on_destroy    optional executable, runs in the foreground during `rm`
 config.toml                optional harness config
@@ -38,10 +38,10 @@ Hooks run with the tree as their working directory. They get `WRK_ROOT`, `WRK_RE
 
 ```sh
 wrk clone <url> [repo]
-wrk new <repo> <tree> [--track] [--wait]
+wrk new <repo> <tree> [--branch NAME] [--track] [--wait]
 wrk rm <repo> <tree> [--force]
 wrk wait <repo> <tree> [--timeout SECS]
-wrk go [<repo> <tree> <harness>] [--new] [--wait] [--track] [--fill] [-- <harness args>]
+wrk go [<repo> <tree> <harness>] [--new] [--wait] [--branch NAME] [--track] [--fill] [-- <harness args>]
 wrk pick [--json] [--fill]
 wrk ls [repo]
 wrk logs <repo> <tree> [-f]
@@ -49,7 +49,7 @@ wrk path <repo> [tree]
 ```
 
 - Any `<repo>`, `<tree>`, or `<harness>` argument accepts a unique prefix. An ambiguous prefix is an error that lists the matches.
-- `new` checks out branch `<tree>`. It reuses a local branch of that name if one exists. Otherwise it creates a fresh branch from origin's default branch, even when `origin/<tree>` exists, because common names often match someone's stale branch. It tells you when it skipped one. Pass `--track` to check out `origin/<tree>` instead. `go --track` does the same when `go` creates a tree.
+- `new` checks out branch `<tree>`, or the branch named by `--branch`. The tree folder keeps the tree name. It reuses a local branch of that name if the branch has commits that origin's default branch lacks. A local branch with no commits of its own is deleted and replaced, and `new` says so. Otherwise it creates a fresh branch from origin's default branch, even when `origin/<branch>` exists, because common names often match someone's stale branch. It tells you when it skipped one. Pass `--track` to check out `origin/<branch>` instead. `go --branch` and `go --track` do the same when `go` creates a tree. `WRK_BRANCH` in hooks is the branch the tree is on.
 - `go` opens an existing tree that matches, or creates one when nothing matches. `--new` always creates a tree. `go` launches the harness in the tree right away, even while `on_create` is still running, and warns you if the hook is running or failed. With `--wait` it waits for `on_create` first and doesn't launch if the hook failed. With no arguments it opens a picker. The picker draws a centered panel. `--fill` makes it use the whole terminal, for hosts such as herdr popups that already pad it.
 - `pick` opens the same picker but only prints the selection: the tree path, plus the `wrk go` command to open it with `--json`. It changes nothing, so a tool that places sessions itself can run the command wherever it wants. The picker draws on `/dev/tty`, so `$(wrk pick --json)` captures only the JSON.
 - `rm` refuses a tree with uncommitted changes or a running hook unless you pass `--force`. It keeps the branch.
@@ -107,7 +107,7 @@ A new tree's session opens on the agent tab, and the agent starts at once. A sec
 
 Each Rex key is `alt+space` followed by one letter: `a` adds an agent or shell block to the session, `e` opens helix in its tree, and `w` closes the session and removes its tree. Pass `keys` to `setup` in `init.lua` to change them.
 
-`alt+space` then `n` opens the composer. Type a ticket ID, a title, or a plain name. The first row always creates a tree with exactly the name you typed. Pick a ticket row to use Linear's branch name instead.
+`alt+space` then `n` opens the composer. Type a ticket ID, a title, or a plain name. The first row always creates a tree with exactly the name you typed. Pick a ticket row to use Linear's branch name instead. The tree keeps the typed or ticket-derived name, and `rw` passes the branch to `wrk new --branch`, adding `--track` when `origin` already has that branch.
 
 - `enter` starts the session.
 - `↑` `↓` pick a ticket row.

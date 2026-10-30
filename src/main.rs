@@ -21,7 +21,10 @@ enum Command {
     New {
         repo: String,
         tree: String,
-        /// Check out origin/<tree> instead of branching from origin's default branch.
+        /// Branch to check out. Defaults to the tree name.
+        #[arg(long)]
+        branch: Option<String>,
+        /// Check out origin/<branch> instead of branching from origin's default branch.
         #[arg(long)]
         track: bool,
         #[arg(long)]
@@ -57,7 +60,10 @@ enum Command {
         /// Wait for on_create to finish, and don't launch if it failed.
         #[arg(long)]
         wait: bool,
-        /// When creating the tree, check out origin/<tree> instead of branching fresh.
+        /// When creating the tree, the branch to check out. Defaults to the tree name.
+        #[arg(long)]
+        branch: Option<String>,
+        /// When creating the tree, check out origin/<branch> instead of branching fresh.
         #[arg(long)]
         track: bool,
         /// Fill the whole terminal with the picker instead of a centered panel.
@@ -120,10 +126,11 @@ fn main() {
         Command::New {
             repo,
             tree,
+            branch,
             track,
             wait,
             json,
-        } => wrk::cmd::new::run(&paths, &repo, &tree, track, wait, json),
+        } => wrk::cmd::new::run(&paths, &repo, &tree, branch.as_deref(), track, wait, json),
         Command::Rm {
             repo,
             tree,
@@ -142,6 +149,7 @@ fn main() {
             harness,
             new,
             wait,
+            branch,
             track,
             fill,
             args,
@@ -153,6 +161,7 @@ fn main() {
             wrk::cmd::go::GoFlags {
                 new_tree: new,
                 wait,
+                branch,
                 track,
                 fill,
             },
