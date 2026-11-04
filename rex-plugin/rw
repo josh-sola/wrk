@@ -15,6 +15,11 @@ STATE = os.path.expanduser("~/.local/state/rw/sessions.json")
 AGENTS = ["claude", "codex", "devin", "shell"]
 TICKET = re.compile(r"^[A-Za-z]+-\d+$")
 KEY_HELP = 'security add-generic-password -s linear-api-key -a "$USER" -w'
+# Session labels start with a tag for the repo. Sessions are grouped by repo in
+# this order; a repo not listed here uses its own name and sorts last.
+REPO_TAGS = {"monorepo": "mono", "helm": "helm", "jrepo": "jrpo", "wrk": "wrk", "taps": "taps", "jpi": "jpi"}
+TAG_ORDER = list(REPO_TAGS.values())
+LABEL_TAG = re.compile(r"^\[([^\]]+)\]")
 
 
 class Fail(Exception):
@@ -135,8 +140,19 @@ def assigned_issues():
     return linear(q)["viewer"]["assignedIssues"]["nodes"]
 
 
-def short(title):
-    return title[:40].rstrip()
+def kebab(text, limit=50):
+    slug = re.sub(r"[^a-z0-9]+", "-", re.sub(r"['’]", "", text.lower())).strip("-")
+    if len(slug) > limit:
+        slug = slug[:limit].rsplit("-", 1)[0] if "-" in slug[:limit] else slug[:limit]
+    return slug
+
+
+def repo_tag(repo):
+    return REPO_TAGS.get(repo, repo)
+
+
+def tag_rank(tag):
+    return TAG_ORDER.index(tag) if tag in TAG_ORDER else len(TAG_ORDER)
 
 
 def fzf(lines, prompt, query=False):
@@ -185,24 +201,50 @@ def agent_cmd(agent, model=None):
     return [agent]
 
 
-def resolve(arg, parent, tree=None):
+def resolve(arg, repo, tree=None):
     """Return (tree, branch, label, ticket) for a ticket id or plain name.
 
     `tree` overrides the tree name; a ticket's branch stays Linear's branchName.
+    Labels look like "[mono][ml-616] ticket-title" or "[mono] branch-name".
     """
     if tree and "/" in tree:
         raise Fail("tree names cannot contain '/'")
+    tag = f"[{repo_tag(repo)}]"
     if not TICKET.match(arg):
         if "/" in arg:
             raise Fail("tree names cannot contain '/'")
-        return tree or arg, tree or arg, arg, None
+        branch = tree or arg
+        return branch, branch, f"{tag} {kebab(branch)}", None
     issue = fetch_issue(arg.upper())
     branch = issue["branchName"]
     tree = tree or branch.split("/", 1)[-1]
-    label = f"{issue['identifier']} {short(issue['title'])}"
-    if parent:
-        label = f"{parent.upper()} › {label}"
+    label = f"{tag}[{issue['identifier'].lower()}] {kebab(issue['title'])}"
     return tree, branch, label, issue["identifier"]
+
+
+def group_by_repo(sid, repo):
+    """Move a new session next to the other sessions of its repo.
+
+    It goes after the last session whose repo sorts at or before its own.
+    If there is none, it goes before the first tagged session. Sessions
+    without a repo tag are left where they are.
+    """
+    out = run(["rex", "ls", "--json"], check=False).stdout
+    try:
+        sessions = json.loads(out)["sessions"]
+    except (ValueError, KeyError):
+        return
+    rank = tag_rank(repo_tag(repo))
+    tagged = []
+    for s in sessions:
+        m = LABEL_TAG.match(s["label"] or "")
+        if s["session_id"] != sid and m:
+            tagged.append((tag_rank(m.group(1)), s["session_id"]))
+    before = [other for r, other in tagged if r <= rank]
+    if before:
+        run(["rex", "session", "move", sid, "--after", before[-1]], check=False)
+    elif tagged:
+        run(["rex", "session", "move", sid, "--before", tagged[0][1]], check=False)
 
 
 def remote_has_branch(repo, branch):
@@ -214,7 +256,7 @@ def remote_has_branch(repo, branch):
 
 def new_session(arg, repo, agent, client=None, parent=None, tree=None, model=None, log=sys.stdout):
     """Open a session and return {session_id, label, repo, tree, path}."""
-    tree, branch, label, ticket = resolve(arg, parent, tree)
+    tree, branch, label, ticket = resolve(arg, repo, tree)
     live = live_sessions()
     for sid, existing in live.items():
         if existing == label:
@@ -237,6 +279,7 @@ def new_session(arg, repo, agent, client=None, parent=None, tree=None, model=Non
     out = run(["rex", "new", label, "-c", path, "--keep-open", "--json",
                "--"] + cmd).stdout
     sid = json.loads(out)["session_id"]
+    group_by_repo(sid, repo)
     if created:
         script = ('wrk logs -f "$1" "$2"; wrk wait "$1" "$2" >/dev/null 2>&1 && exit 0; '
                   'echo; echo "setup failed: wrk logs $1 $2"; exec "${SHELL:-/bin/zsh}"')
@@ -309,7 +352,9 @@ def cmd_children(args):
         return
     prev = None
     for e in entries:
-        if e["ticket"] == parent and is_live(e, live):
+        # Keep children next to their parent only when they share its repo,
+        # so sessions stay grouped by repo.
+        if e["ticket"] == parent and e["repo"] == repo and is_live(e, live):
             prev = session_id_of(e, live)
     for kid in kids:
         sid = new_session(kid["identifier"], repo, agent, args.client, parent)["session_id"]
@@ -433,7 +478,7 @@ def main():
 
     p = sub.add_parser("new", parents=[common, repo_agent], help="open a session for a ticket or name")
     p.add_argument("name", metavar="NAME|TICKET", help="ticket like ML-616, or a plain name")
-    p.add_argument("--parent", help="parent ticket (adds it to the label)")
+    p.add_argument("--parent", help="parent ticket (rw close --with-children closes it with the parent)")
     p.add_argument("--branch", help="tree name (a ticket still uses Linear's branch name)")
     p.add_argument("--model", help="model for claude or codex")
     p.add_argument("--json", action="store_true", help="print one JSON document; progress goes to stderr")
