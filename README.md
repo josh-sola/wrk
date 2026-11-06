@@ -116,4 +116,4 @@ Each Rex key is `alt+space` followed by one letter: `a` adds an agent or shell b
 - You can also use the mouse: click a chip to open its dropdown, click an item to pick it, click a row to select it and click it again to start it, and click the branch line to edit it. The wheel scrolls.
 - `esc` closes a menu, ends a branch edit, or closes the composer.
 
-The composer remembers your last repo and agent, and caches your tickets so it draws at once. It hands each launch to `rw new`.
+The composer always starts on monorepo, remembers your last agent, and caches your tickets so it draws at once. It hands each launch to `rw new`.
