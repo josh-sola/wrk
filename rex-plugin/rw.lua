@@ -59,7 +59,7 @@ local SCRIPT = [[
 "$@" || { echo; printf 'rw failed. Press Enter to close.'; read -r _; }
 ]]
 
-local function popup(ctx, opts, title, bin, subcommand)
+local function popup(ctx, opts, title, bin, subcommand, size)
   local command = { "/bin/zsh", "-lic", SCRIPT, "rw", bin }
   for _, word in ipairs(subcommand) do table.insert(command, word) end
   for _, word in ipairs{
@@ -70,7 +70,7 @@ local function popup(ctx, opts, title, bin, subcommand)
   -- No window_id: a layer created with one was placed but not drawn by the
   -- Rex app, while one in the active window was.
   local _, err = rex.session.new_layer{
-    bounds = popup_bounds(ctx, opts),
+    bounds = popup_bounds(ctx, size or opts),
     focus  = true,
     layout = {
       block = {
@@ -89,7 +89,7 @@ function M.setup(options)
   for name, value in pairs(options or {}) do opts[name] = value end
   local keys = opts.keys or {}
 
-  local function define(name, title, subcommand, description, bin)
+  local function define(name, title, subcommand, description, bin, size)
     rex.action{
       name        = "rw_" .. name,
       title       = "rw: " .. title,
@@ -97,7 +97,7 @@ function M.setup(options)
       category    = "rw",
       keywords    = "rw worktree wrk " .. name,
       run         = function(ctx, args)
-        popup(ctx, opts, "rw " .. name, bin or opts.bin, subcommand)
+        popup(ctx, opts, "rw " .. name, bin or opts.bin, subcommand, size)
       end,
     }
     if keys[name] then rex.bind(keys[name], "rw_" .. name) end
@@ -107,7 +107,7 @@ function M.setup(options)
   define("add", "add block", { "add" }, "Add an agent block to the current session's worktree")
   define("edit", "edit file", { "edit" }, "Open helix in the current session's worktree")
   define("children", "open sub-ticket sessions", { "children" }, "Open one session per sub-ticket of this session's ticket")
-  define("close", "close session", { "close", "--confirm" }, "Remove the current session's worktree and close the session")
+  define("close", "close session", { "close" }, "Remove the current session's worktree and close the session", opts.launch, { columns = 64, rows = 16 })
 end
 
 return M

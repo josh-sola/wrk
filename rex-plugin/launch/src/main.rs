@@ -1,4 +1,5 @@
 //! `rw-launch`: a popup that composes a new `rw` session.
+mod close;
 mod layout;
 mod state;
 mod theme;
@@ -28,7 +29,6 @@ use theme::Theme;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Remembered {
-    repo: Option<String>,
     agent: Option<String>,
 }
 
@@ -49,7 +49,6 @@ fn save_remembered(request: &Request) {
         return;
     };
     let value = Remembered {
-        repo: Some(request.repo.clone()),
         agent: Some(request.agent.to_string()),
     };
     if let Some(dir) = path.parent() {
@@ -274,7 +273,14 @@ fn run_rw(request: &Request, client: Option<&str>) -> bool {
     match cmd.output() {
         Ok(out) if out.status.success() => true,
         Ok(out) => {
-            eprintln!("{}", String::from_utf8_lossy(&out.stderr).trim_end());
+            // With --json, rw puts its error on stdout as {"error": "..."}.
+            let error = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                .ok()
+                .and_then(|doc| doc["error"].as_str().map(str::to_string));
+            eprint!("{}", String::from_utf8_lossy(&out.stderr));
+            if let Some(error) = error {
+                eprintln!("rw: {error}");
+            }
             false
         }
         Err(e) => {
@@ -293,11 +299,15 @@ fn wait_for_enter() {
 fn main() -> ExitCode {
     let started = Instant::now();
     let mut client = None;
+    let mut session = None;
+    let mut close_mode = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "close" if !close_mode => close_mode = true,
             "--client" => client = args.next(),
-            "--session" | "--block" => {
+            "--session" => session = args.next(),
+            "--block" => {
                 args.next();
             }
             other => {
@@ -305,6 +315,21 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+
+    if close_mode {
+        let Some(session) = session.filter(|s| !s.is_empty()) else {
+            eprintln!("rw-launch: close needs --session");
+            return ExitCode::from(2);
+        };
+        return match close::run(&session, started) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("rw-launch: {e}");
+                wait_for_enter();
+                ExitCode::FAILURE
+            }
+        };
     }
 
     let repos = match load_repos() {
@@ -316,16 +341,12 @@ fn main() -> ExitCode {
         }
     };
     let last = load_remembered();
-    let repo = last
-        .repo
-        .and_then(|r| repos.iter().position(|x| *x == r))
-        .unwrap_or(0);
     let agent = AGENTS
         .iter()
         .position(|a| Some(*a) == last.agent.as_deref())
         .unwrap_or(0);
 
-    let request = match compose(App::new(repos, repo, agent), started) {
+    let request = match compose(App::new(repos, 0, agent), started) {
         Ok(Some(request)) => request,
         Ok(None) => return ExitCode::SUCCESS,
         Err(e) => {
@@ -340,5 +361,16 @@ fn main() -> ExitCode {
     } else {
         wait_for_enter();
         ExitCode::FAILURE
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_old_remembered_file_with_a_repo_still_parses() {
+        let old: Remembered = serde_json::from_str(r#"{"repo":"helm","agent":"codex"}"#).unwrap();
+        assert_eq!(old.agent.as_deref(), Some("codex"));
     }
 }

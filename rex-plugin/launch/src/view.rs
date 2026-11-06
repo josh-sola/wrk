@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph};
 use wrk::tui::style::{Palette, highlighted_spans, truncate};
@@ -8,6 +8,26 @@ use wrk::tui::style::{Palette, highlighted_spans, truncate};
 use crate::layout::{Layout, chip_text, window_start};
 use crate::state::{AGENTS, App, Menu, Tickets};
 use crate::theme::Theme;
+
+/// The repo's color: the accent for monorepo, a warning color for any
+/// other repo, so a card aimed at the wrong repo stands out.
+pub fn repo_style(palette: &Palette, repo: &str) -> Style {
+    if repo == "monorepo" {
+        palette.accent_bold()
+    } else {
+        palette.yellow().add_modifier(Modifier::BOLD)
+    }
+}
+
+/// The card's border color. A non-monorepo card borders in the warning
+/// color. With `NO_COLOR` that color is empty, so the plain edge stays.
+pub fn border_color(palette: &Palette, theme: &Theme, repo: &str) -> Color {
+    if repo == "monorepo" {
+        theme.edge
+    } else {
+        palette.yellow().fg.unwrap_or(theme.edge)
+    }
+}
 
 pub fn render(frame: &mut Frame, app: &App, palette: &Palette, theme: &Theme) {
     let area = frame.area();
@@ -19,14 +39,20 @@ pub fn render(frame: &mut Frame, app: &App, palette: &Palette, theme: &Theme) {
         return;
     };
 
+    let repo = &app.repos[app.repo];
     let chip = palette.accent_bold().add_modifier(Modifier::REVERSED);
+    let repo_chip = repo_style(palette, repo).add_modifier(Modifier::REVERSED);
     let block = Block::new()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(theme.edge).bg(theme.card))
+        .border_style(
+            Style::new()
+                .fg(border_color(palette, theme, repo))
+                .bg(theme.card),
+        )
         .padding(Padding::horizontal(1))
         .style(Style::new().bg(theme.card))
-        .title_top(Line::from(Span::styled(chip_text(&app.repos[app.repo]), chip)).left_aligned())
+        .title_top(Line::from(Span::styled(chip_text(repo), repo_chip)).left_aligned())
         .title_top(Line::from(Span::styled(chip_text(AGENTS[app.agent]), chip)).right_aligned());
     frame.render_widget(block, lay.card);
 
@@ -114,17 +140,18 @@ fn list_lines(app: &App, palette: &Palette, theme: &Theme, area: Rect) -> Vec<Li
     let mut rows: Vec<Line<'static>> = Vec::new();
 
     let name = app.typed_name();
+    let repo = &app.repos[app.repo];
     let new_text = if name.is_empty() {
-        "new tree".to_string()
+        format!("new {repo} tree")
     } else {
-        format!("new tree \"{name}\"")
+        format!("new {repo} tree \"{name}\"")
     };
     rows.push(picked(
         Line::from(vec![
             Span::styled("+ ", palette.green()),
             Span::styled(
                 truncate(&new_text, width.saturating_sub(2)),
-                Style::new().add_modifier(Modifier::BOLD),
+                repo_style(palette, repo),
             ),
         ]),
         app.selected == 0,
