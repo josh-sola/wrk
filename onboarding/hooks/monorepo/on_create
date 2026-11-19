@@ -3,6 +3,10 @@
 
 link_plans
 
+# Every tree needs its own submodule checkouts. With submodule.recurse=true, a
+# restack in a tree without them writes a broken helm/.git stub.
+step git submodule update --init --recursive
+
 # Reads CI's remote cache using the `turbo login` token, and shares one local
 # cache across every tree so a new tree starts warm.
 export TURBO_TEAM=sola-solutions

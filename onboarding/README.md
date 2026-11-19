@@ -114,9 +114,10 @@ See the repo's main `README.md` for every command and for harness settings.
 `monorepo/on_create` runs in the new tree, in order:
 
 1. Links the shared `plans/` folder.
-2. `pnpm install --frozen-lockfile`, then `pnpm build:packages`.
-3. `uv sync` for the Python projects.
-4. Logs in to AWS dev if needed, then `pnpm generate:env` to write each service's `.env` file from Parameter Store.
+2. `git submodule update --init --recursive` to check out `helm` and `n8n`.
+3. `pnpm install --frozen-lockfile`, then `pnpm build:packages`.
+4. `uv sync` for the Python projects.
+5. Logs in to AWS dev if needed, then `pnpm generate:env` to write each service's `.env` file from Parameter Store.
 
 The AWS step is last, so an unfinished login fails only that step. To retry it, run `pnpm generate:env` in the tree once you are logged in.
 
