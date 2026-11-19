@@ -219,13 +219,25 @@ MODEL_FLAG = {"claude": "--model", "codex": "-m"}
 
 
 def agent_cmd(agent, model=None):
+    """[] means a plain shell, which in_shell starts by itself."""
     if agent == "shell":
-        return [os.environ.get("SHELL", "/bin/zsh")]
+        return []
     if not shutil.which(agent):
         raise Fail(f"{agent} is not on PATH")
     if model and agent in MODEL_FLAG:
         return [agent, MODEL_FLAG[agent], model]
     return [agent]
+
+
+def in_shell(cmd):
+    """An interactive shell reads your startup files, so the pane gets your
+    usual setup. Quitting the agent or editor leaves you at a prompt in the
+    same directory.
+    """
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    if not cmd:
+        return [shell]
+    return [shell, "-ic", f"{shlex.join(cmd)}; exec {shlex.quote(shell)}"]
 
 
 def resolve(arg, repo, tree=None):
@@ -304,7 +316,7 @@ def new_session(arg, repo, agent, client=None, parent=None, tree=None, model=Non
         path = json.loads(run(wrk_new).stdout)["path"]
 
     out = run(["rex", "new", label, "-c", path, "--keep-open", "--json",
-               "--"] + cmd).stdout
+               "--"] + in_shell(cmd)).stdout
     sid = json.loads(out)["session_id"]
     group_by_repo(sid, repo)
     if created:
@@ -348,7 +360,7 @@ def cmd_add(args):
     agent = args.agent
     if not agent:
         agent = pick(AGENTS, "agent> ") if sys.stdin.isatty() else "claude"
-    split_in_tree(args, entry, [agent_cmd(agent)])
+    split_in_tree(args, entry, agent_cmd(agent))
 
 
 def cmd_edit(args):
@@ -362,7 +374,7 @@ def split_in_tree(args, entry, command):
     cmd = ["rex", "split", "-s", current_session(args), "-c", entry["path"], "--keep-open"]
     if args.block:
         cmd += ["-b", args.block]
-    run(cmd + ["--"] + command)
+    run(cmd + ["--"] + in_shell(command))
 
 
 def cmd_children(args):
